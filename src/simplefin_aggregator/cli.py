@@ -6,13 +6,20 @@ from http import HTTPStatus
 from pathlib import Path  # noqa: TC003 (Typer needs this at runtime for CLI type resolution)
 from typing import Annotated
 
-import httpx
+import httpx2
 import typer
+import uvicorn
 
+from .app import create_app
 from .config import ConfigError, default_config_path, load_config
 
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
+
+
+def _build_claim_client() -> httpx2.Client:
+    """Overridden in tests to inject an httpx2.MockTransport."""
+    return httpx2.Client(follow_redirects=True)
 
 
 @app.command()
@@ -30,10 +37,10 @@ def claim(setup_token: str) -> None:
         typer.echo(f"error: decoded setup token is not a valid URL: {exc}", err=True)
         raise typer.Exit(code=1) from None
 
-    with httpx.Client(follow_redirects=True) as client:
+    with _build_claim_client() as client:
         try:
             response = client.post(claim_url)
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             typer.echo(f"error: could not reach claim URL: {exc}", err=True)
             raise typer.Exit(code=1) from None
 
@@ -64,13 +71,13 @@ def serve(
     config_path = config if config is not None else default_config_path()
 
     try:
-        _ = load_config(config_path)
+        loaded_config = load_config(config_path)
     except ConfigError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=1) from None
 
-    typer.echo("serve: not yet implemented", err=True)
-    raise typer.Exit(code=1)
+    fastapi_app = create_app(loaded_config)
+    uvicorn.run(fastapi_app, host=loaded_config.bind_host, port=loaded_config.bind_port)
 
 
 def main() -> None:
