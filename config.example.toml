@@ -23,16 +23,18 @@ username = "actual-budget"
 password = "replace-with-a-strong-password"
 
 [[providers]]
-name = "simplefin"
-# Obtained by running: simplefin-aggregator claim <simplefin-setup-token>
-access_url = "https://user:pass@beta-bridge.simplefin.org/simplefin"
+name = "someprovider"
+# Obtained by running: simplefin-aggregator claim <setup-token>
+access_url = "https://user:pass@someprovider.example.com/simplefin"
+
+# [[providers]]
+# name = "simplefin"
+# access_url = "https://user:pass@beta-bridge.simplefin.org/simplefin"
 
 # [[providers]]
 # name = "lunchflow"
-# # Obtained by running: simplefin-aggregator claim <lunchflow-setup-token>
 # access_url = "https://user:pass@www.lunchflow.app/api/simplefin-bridge"
 
 # [[providers]]
 # name = "redbark"
-# # Obtained by running: simplefin-aggregator claim <redbark-setup-token>
 # access_url = "https://user:pass@api.redbark.com/simplefin"

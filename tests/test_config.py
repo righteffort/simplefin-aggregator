@@ -82,9 +82,24 @@ def test_load_config_rejects_missing_file(tmp_path: Path) -> None:
         _ = load_config(tmp_path / "does-not-exist.toml")
 
 
-def test_load_config_requires_at_least_one_provider(tmp_path: Path) -> None:
+def test_load_config_rejects_zero_providers(tmp_path: Path) -> None:
     no_providers = VALID_TOML.split("[[providers]]", maxsplit=1)[0]
     path = _write(tmp_path, no_providers)
+
+    with pytest.raises(ConfigError):
+        _ = load_config(path)
+
+
+def test_load_config_rejects_more_than_one_provider(tmp_path: Path) -> None:
+    two_providers = (
+        VALID_TOML
+        + """
+[[providers]]
+name = "second-bank"
+access_url = "https://user:pass@second.example.com/simplefin"
+"""
+    )
+    path = _write(tmp_path, two_providers)
 
     with pytest.raises(ConfigError):
         _ = load_config(path)

@@ -53,7 +53,9 @@ class ConsumerAuth(BaseModel):
 class Config(BaseModel):
     bind_host: str = "127.0.0.1"
     bind_port: int = 8080
-    providers: list[Provider] = Field(min_length=1)
+    # Schema and internal types are already a list for the multi-provider version to come;
+    # this version only supports exactly one.
+    providers: list[Provider] = Field(min_length=1, max_length=1)
     consumer: ConsumerAuth
     claim_token: SecretStr
     base_url: str
