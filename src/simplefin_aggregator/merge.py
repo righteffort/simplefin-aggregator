@@ -1,4 +1,4 @@
-"""Combine provider responses into one response to the consumer.
+"""Combine provider responses into one response to the client app.
 
 With exactly one provider, this returns that response's raw bytes untouched —
 which is what keeps the byte-identity guarantee for this version. Merging

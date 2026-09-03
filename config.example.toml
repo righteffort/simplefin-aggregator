@@ -1,23 +1,23 @@
 # simplefin-aggregator config.
 #
-# This file contains credentials (provider access URLs, consumer basic-auth
-# password, claim token). It must be readable only by its owner:
-#   chmod 600 config.toml
+# This file contains credentials (provider access URLs, client app
+# basic-auth password, claim token). It must be readable only by its
+# owner: chmod 600 config.toml
 
 bind_host = "127.0.0.1"
 bind_port = 8080
 
 # The base URL this aggregator advertises in the access URL it hands
 # back from POST /simplefin/claim/{token}. Set it to the URL reachable
-# from the consumer.
+# from the client.
 base_url = "http://127.0.0.1:8080"
 
 # The secret path segment for POST /simplefin/claim/{token}. Pick a long
 # random value; it is a shared secret, not a public constant.
 claim_token = "replace-with-a-long-random-token"
 
-[consumer]
-# Basic-auth credentials the consumer (for example, Actual Budget)
+[client]
+# Basic-auth credentials the client (for example, Actual Budget)
 # must present to GET /simplefin/accounts and GET /simplefin/info.
 username = "actual-budget"
 password = "replace-with-a-strong-password"

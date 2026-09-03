@@ -18,8 +18,8 @@ bind_port = 8080
 base_url = "http://127.0.0.1:8080"
 claim_token = "s3cret-claim-token"
 
-[consumer]
-username = "app-username"
+[client]
+username = "client-username"
 password = "s3cret-password"
 
 [[providers]]
@@ -45,7 +45,7 @@ def test_load_config_parses_valid_file(tmp_path: Path) -> None:
     assert config.bind_port == 8080
     assert len(config.providers) == 1
     assert config.providers[0].name == "my-bank"
-    assert config.consumer.username == "app-username"
+    assert config.client.username == "client-username"
 
 
 def test_load_config_rejects_malformed_access_url_at_load_time(tmp_path: Path) -> None:
@@ -66,8 +66,51 @@ def test_load_config_rejects_non_https_access_url(tmp_path: Path) -> None:
     )
     path = _write(tmp_path, bad_toml)
 
-    with pytest.raises(ConfigError, match="https"):
+    with pytest.raises(ConfigError, match="https") as exc_info:
         _ = load_config(path)
+
+    assert "user:pass" not in str(exc_info.value)
+
+
+def test_load_config_rejects_claim_token_with_slash(tmp_path: Path) -> None:
+    bad_toml = VALID_TOML.replace(
+        'claim_token = "s3cret-claim-token"', 'claim_token = "s3cret/claim/token"'
+    )
+    path = _write(tmp_path, bad_toml)
+
+    with pytest.raises(ConfigError, match="claim_token"):
+        _ = load_config(path)
+
+
+def test_load_config_error_does_not_leak_rejected_claim_token_value(tmp_path: Path) -> None:
+    bad_toml = VALID_TOML.replace(
+        'claim_token = "s3cret-claim-token"', 'claim_token = "s3cret/claim/token"'
+    )
+    path = _write(tmp_path, bad_toml)
+
+    with pytest.raises(ConfigError) as exc_info:
+        _ = load_config(path)
+
+    assert "s3cret/claim/token" not in str(exc_info.value)
+
+
+def test_load_config_rejects_empty_claim_token(tmp_path: Path) -> None:
+    bad_toml = VALID_TOML.replace('claim_token = "s3cret-claim-token"', 'claim_token = ""')
+    path = _write(tmp_path, bad_toml)
+
+    with pytest.raises(ConfigError, match="claim_token"):
+        _ = load_config(path)
+
+
+def test_load_config_accepts_url_safe_claim_token_characters(tmp_path: Path) -> None:
+    ok_toml = VALID_TOML.replace(
+        'claim_token = "s3cret-claim-token"', 'claim_token = "abc123._~-XYZ"'
+    )
+    path = _write(tmp_path, ok_toml)
+
+    config = load_config(path)
+
+    assert config.claim_token.get_secret_value() == "abc123._~-XYZ"
 
 
 def test_load_config_rejects_malformed_toml(tmp_path: Path) -> None:

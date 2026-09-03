@@ -8,7 +8,7 @@ from simplefin_aggregator.app import create_app
 from .support import install_provider_transport, make_config
 
 
-AUTH = ("app-username", "s3cret-password")
+AUTH = ("client-username", "s3cret-password")
 
 
 def test_accounts_without_basic_auth_is_rejected() -> None:

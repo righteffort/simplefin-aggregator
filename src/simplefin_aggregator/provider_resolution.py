@@ -2,8 +2,7 @@
 
 With exactly one provider configured, the answer is always that provider. Once
 multiple providers exist, this is where id-namespacing-based ownership lookup
-will live; it deliberately cannot fan out to ask each provider (see
-PROMPT.md's "No traffic beyond what the consumer generates").
+will live.
 """
 
 from __future__ import annotations

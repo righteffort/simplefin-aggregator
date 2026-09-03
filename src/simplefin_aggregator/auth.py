@@ -1,4 +1,4 @@
-"""HTTP Basic Auth dependency for endpoints the consumer calls."""
+"""HTTP Basic Auth dependency for endpoints the client app calls."""
 
 from __future__ import annotations
 
@@ -14,16 +14,14 @@ from .config import Config
 _security = HTTPBasic(auto_error=False)
 
 
-def require_consumer_auth(
+def require_client_auth(
     request: Request, credentials: Annotated[HTTPBasicCredentials | None, Depends(_security)]
 ) -> None:
-    """Raise 403 unless the request's Basic Auth matches the configured consumer."""
+    """Raise 403 unless the request's Basic Auth matches the configured client app."""
     config = cast(Config, request.app.state.config)  # pyright: ignore [reportAny]
     valid = credentials is not None and (
-        secrets.compare_digest(credentials.username, config.consumer.username)
-        and secrets.compare_digest(
-            credentials.password, config.consumer.password.get_secret_value()
-        )
+        secrets.compare_digest(credentials.username, config.client.username)
+        and secrets.compare_digest(credentials.password, config.client.password.get_secret_value())
     )
     if not valid:
-        raise HTTPException(status_code=403, detail="invalid consumer credentials")
+        raise HTTPException(status_code=403, detail="invalid client app credentials")

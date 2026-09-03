@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse, Response
 
 from .access_url import build_access_url
-from .auth import require_consumer_auth
+from .auth import require_client_auth
 from .id_rewriting import rewrite_ids, unrewrite_ids
 from .merge import merge
 from .provider_clients import build_provider_client
@@ -30,6 +30,11 @@ if TYPE_CHECKING:
 ACCOUNTS_FORWARDED_PARAMS = frozenset(
     {"start-date", "end-date", "pending", "account", "balances-only", "version"}
 )
+
+# The path segment before {token}. Also used to redact the claim token from
+# uvicorn's access log (see access_log.py) -- keeping both derived from this
+# one constant means the route and the redaction can't silently drift apart.
+CLAIM_PATH_PREFIX = "/simplefin/claim/"
 
 
 @dataclass
@@ -63,24 +68,28 @@ def create_app(config: Config) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-        clients = {provider.name: build_provider_client(provider) for provider in config.providers}
-        app.state.app_state = _AppState(provider_clients=clients, request_counter=RequestCounter())
+        provider_clients = {
+            provider.name: build_provider_client(provider) for provider in config.providers
+        }
+        app.state.app_state = _AppState(
+            provider_clients=provider_clients, request_counter=RequestCounter()
+        )
         try:
             yield
         finally:
-            for client in clients.values():
-                await client.aclose()
+            for provider_client in provider_clients.values():
+                await provider_client.aclose()
 
     app = FastAPI(lifespan=lifespan)
     app.state.config = config
 
-    @app.post("/simplefin/claim/{token}")
+    @app.post(f"{CLAIM_PATH_PREFIX}{{token}}")
     async def claim(token: str) -> PlainTextResponse:  # pyright: ignore [reportUnusedFunction]
         if not secrets.compare_digest(token, config.claim_token.get_secret_value()):
             raise HTTPException(status_code=403, detail="unknown claim token")
         return PlainTextResponse(build_access_url(config))
 
-    @app.get("/simplefin/accounts", dependencies=[Depends(require_consumer_auth)])
+    @app.get("/simplefin/accounts", dependencies=[Depends(require_client_auth)])
     async def accounts(request: Request) -> Response:  # pyright: ignore [reportUnusedFunction]
         state = _get_app_state(request)
 

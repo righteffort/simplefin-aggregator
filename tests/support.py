@@ -39,7 +39,7 @@ def make_config(
     *,
     base_url: str = "http://127.0.0.1:8080",
     claim_token: str = "the-claim-token",
-    username: str = "app-username",
+    username: str = "client-username",
     password: str = "s3cret-password",
     access_url: str = "https://user:pass@provider.example.com/simplefin",
 ) -> Config:
@@ -48,7 +48,7 @@ def make_config(
         {
             "base_url": base_url,
             "claim_token": claim_token,
-            "consumer": {"username": username, "password": password},
+            "client": {"username": username, "password": password},
             "providers": [{"name": "my-bank", "access_url": access_url}],
         }
     )

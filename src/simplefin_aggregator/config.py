@@ -4,7 +4,7 @@ import stat
 import sys
 import tomllib
 from pathlib import Path
-from urllib.parse import SplitResult, urlsplit
+from urllib.parse import SplitResult, quote, urlsplit
 
 from platformdirs import user_config_dir
 from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator
@@ -43,8 +43,8 @@ class Provider(BaseModel):
         return urlsplit(self.access_url.get_secret_value())
 
 
-class ConsumerAuth(BaseModel):
-    """The basic-auth credentials this aggregator requires from its consumer."""
+class ClientAuth(BaseModel):
+    """The basic-auth credentials this aggregator requires from a client app."""
 
     username: str
     password: SecretStr
@@ -56,9 +56,18 @@ class Config(BaseModel):
     # Schema and internal types are already a list for the multi-provider version to come;
     # this version only supports exactly one.
     providers: list[Provider] = Field(min_length=1, max_length=1)
-    consumer: ConsumerAuth
+    client: ClientAuth
     claim_token: SecretStr
     base_url: str
+
+    @field_validator("claim_token")
+    @classmethod
+    def _validate_claim_token(cls, value: SecretStr) -> SecretStr:
+        token = value.get_secret_value()
+        if not token or quote(token, safe="") != token:
+            msg = "claim_token must be non-empty and URL-safe"
+            raise ValueError(msg)
+        return value
 
     @field_validator("base_url")
     @classmethod
@@ -107,5 +116,12 @@ def load_config(path: Path) -> Config:
     try:
         return Config.model_validate(data)
     except ValidationError as exc:
-        msg = f"invalid config in {path}:\n{exc}"
+        # Never str(exc) directly: pydantic's default rendering includes each
+        # field's raw input value, which would print credentials (access_url,
+        # claim_token, passwords) straight to stderr on a validation failure.
+        details = "\n".join(
+            f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
+            for error in exc.errors(include_url=False, include_input=False)
+        )
+        msg = f"invalid config in {path}:\n{details}"
         raise ConfigError(msg) from exc

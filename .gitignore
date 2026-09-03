@@ -5,5 +5,9 @@ __pycache__/
 .ruff_cache/
 /config.toml
 
+# Config, includes credentials
+.config/
+
 # Editors
 *~
+
