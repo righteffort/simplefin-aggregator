@@ -68,7 +68,9 @@ class NormalizedUrl:
     host: str
     port: int | None
     username: str | None
+    """username returned from urlsplit, *not* percent-decoded."""
     password: str | None
+    """password returned from urlsplit, *not* percent-decoded."""
     origin_and_path: str
 
     @property

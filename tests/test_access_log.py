@@ -86,7 +86,7 @@ def test_install_access_log_redaction_allows_distinct_redactions() -> None:
         )
 
         installed = [f for f in logger.filters if isinstance(f, _RedactPathFilter)]
-        assert len(installed) == 2
+        assert len(installed) == 2  # noqa: PLR2004
     finally:
         for f in list(logger.filters):
             logger.removeFilter(f)
