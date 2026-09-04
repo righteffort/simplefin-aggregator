@@ -30,10 +30,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Lint
-        run: uv run ruff check -q --output-format=github
+        run: uv run ruff check . -q --output-format=github
 
       - name: Format
-        run: uv run ruff format --diff
+        run: uv run ruff format . --diff
 
       - name: Typecheck
         run: uv run basedpyright

@@ -2,7 +2,7 @@
 
 This is a developer/agent-facing map of `simplefin-aggregator`.
 
-- **What to build and why**: `PROMPT.md` (the original spec/brief; not
+- **What to build and why**: `docs/PROMPT.md` (the original spec/brief; not
   committed to git, lives only in the working tree).
 - **How to use it**: `README.md` (operator-facing setup instructions).
 - **How it's built**: this file.
