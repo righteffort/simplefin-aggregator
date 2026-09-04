@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from http import HTTPStatus
 from typing import TYPE_CHECKING
 
 from fastapi import Depends, FastAPI
@@ -30,7 +31,7 @@ def test_require_client_auth_accepts_correct_credentials() -> None:
 
     response = client.get("/protected", auth=("client-username", "s3cret-password"))
 
-    assert response.status_code == 200
+    assert response.status_code == HTTPStatus.OK
 
 
 def test_require_client_auth_rejects_wrong_password() -> None:
@@ -38,7 +39,7 @@ def test_require_client_auth_rejects_wrong_password() -> None:
 
     response = client.get("/protected", auth=("client-username", "wrong-password"))
 
-    assert response.status_code == 403
+    assert response.status_code == HTTPStatus.FORBIDDEN
 
 
 def test_require_client_auth_rejects_wrong_username() -> None:
@@ -46,7 +47,7 @@ def test_require_client_auth_rejects_wrong_username() -> None:
 
     response = client.get("/protected", auth=("someone-else", "s3cret-password"))
 
-    assert response.status_code == 403
+    assert response.status_code == HTTPStatus.FORBIDDEN
 
 
 def test_require_client_auth_rejects_missing_credentials() -> None:
@@ -54,4 +55,4 @@ def test_require_client_auth_rejects_missing_credentials() -> None:
 
     response = client.get("/protected")
 
-    assert response.status_code == 403
+    assert response.status_code == HTTPStatus.FORBIDDEN

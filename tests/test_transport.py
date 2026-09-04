@@ -14,10 +14,8 @@ if TYPE_CHECKING:
     from .support import MockHandler
 
 
-def _provider(name: str) -> Provider:
-    return Provider.model_validate(
-        {"name": name, "access_url": f"https://user:pass@{name}.example.com/simplefin"}
-    )
+def _provider(provider_key: str) -> Provider:
+    return Provider.model_validate({"provider_key": provider_key})
 
 
 def _client_for(name: str, handler: MockHandler) -> httpx2.AsyncClient:
@@ -57,8 +55,8 @@ async def test_fetch_all_calls_every_provider() -> None:
     calls: list[str] = []
     tracker = _ConcurrencyTracker()
     clients = {
-        provider_a.name: _client_for("bank-a", _slow_ok_handler(calls, tracker)),
-        provider_b.name: _client_for("bank-b", _slow_ok_handler(calls, tracker)),
+        provider_a.provider_key: _client_for("bank-a", _slow_ok_handler(calls, tracker)),
+        provider_b.provider_key: _client_for("bank-b", _slow_ok_handler(calls, tracker)),
     }
 
     responses = await fetch_all(
@@ -75,13 +73,13 @@ async def test_fetch_all_requests_overlap_in_time() -> None:
     calls: list[str] = []
     tracker = _ConcurrencyTracker()
     clients = {
-        provider_a.name: _client_for("bank-a", _slow_ok_handler(calls, tracker)),
-        provider_b.name: _client_for("bank-b", _slow_ok_handler(calls, tracker)),
+        provider_a.provider_key: _client_for("bank-a", _slow_ok_handler(calls, tracker)),
+        provider_b.provider_key: _client_for("bank-b", _slow_ok_handler(calls, tracker)),
     }
 
     _ = await fetch_all(clients, [provider_a, provider_b], "/accounts", [], RequestCounter())
 
-    assert tracker.max_seen == 2, "both provider requests should have been in flight at once"
+    assert tracker.max_seen == 2, "both provider requests should have been in flight at once"  # noqa: PLR2004
 
 
 async def test_fetch_all_one_provider_failing_still_yields_response_for_both() -> None:
@@ -95,15 +93,15 @@ async def test_fetch_all_one_provider_failing_still_yields_response_for_both() -
         raise httpx2.ConnectError(msg, request=request)
 
     clients = {
-        provider_a.name: _client_for("bank-a", ok_handler),
-        provider_b.name: _client_for("bank-b", failing_handler),
+        provider_a.provider_key: _client_for("bank-a", ok_handler),
+        provider_b.provider_key: _client_for("bank-b", failing_handler),
     }
 
     responses = await fetch_all(
         clients, [provider_a, provider_b], "/accounts", [], RequestCounter()
     )
 
-    assert len(responses) == 2
+    assert len(responses) == 2  # noqa: PLR2004
     assert responses[0].provider_name == "bank-a"
     assert responses[0].ok is True
     assert responses[1].provider_name == "bank-b"

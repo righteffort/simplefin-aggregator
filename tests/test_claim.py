@@ -62,7 +62,7 @@ def test_claim_is_repeatable(monkeypatch: pytest.MonkeyPatch) -> None:
     assert first.exit_code == 0
     assert second.exit_code == 0
     assert first.stdout == second.stdout == access_url + "\n"
-    assert calls == 2
+    assert calls == 2  # noqa: PLR2004
 
 
 def test_claim_with_rejected_token_fails(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -53,7 +53,7 @@ async def fetch_all(
     return list(
         await asyncio.gather(
             *(
-                fetch(clients[provider.name], provider.name, path, params, counter)
+                fetch(clients[provider.provider_key], provider.provider_key, path, params, counter)
                 for provider in providers
             )
         )

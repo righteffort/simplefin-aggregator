@@ -1,3 +1,5 @@
+# ruff: noqa: PLR2004
+
 from simplefin_aggregator.request_counter import RequestCounter
 
 

@@ -1,14 +1,19 @@
 """Configuration model and loading for simplefin-aggregator."""
 
+from __future__ import annotations
+
 import ipaddress
 import stat
 import sys
 import tomllib
 from pathlib import Path
-from urllib.parse import SplitResult, quote, urlsplit
+from urllib.parse import quote, urlsplit
 
 from platformdirs import user_config_dir
-from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator
+from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator, model_validator
+
+from .provider_allowlist import ProviderEntry, find_provider, merged_providers
+from .url_validation import UrlValidationError, parse_root
 
 
 APP_NAME = "simplefin-aggregator"
@@ -21,27 +26,34 @@ class ConfigError(Exception):
 class Provider(BaseModel):
     """A single SimpleFIN provider this aggregator proxies."""
 
-    name: str
-    access_url: SecretStr
+    # An allowlist slug, built-in or from `allowlist` below. It identifies the
+    # provider everywhere: as the store's key, as the provider client dict's
+    # key, and in log lines.
+    provider_key: str
 
-    @field_validator("access_url")
-    @classmethod
-    def _validate_access_url(cls, value: SecretStr) -> SecretStr:
-        parsed = urlsplit(value.get_secret_value())
-        if parsed.scheme != "https":
-            msg = "access_url must use https"
-            raise ValueError(msg)
-        if parsed.hostname is None:
-            msg = "access_url must include a host"
-            raise ValueError(msg)
-        if parsed.username is None or parsed.password is None:
-            msg = "access_url must embed basic auth credentials"
-            raise ValueError(msg)
-        return value
 
-    def parsed_access_url(self) -> SplitResult:
-        """Parse the access URL on demand; never cached in a logged field."""
-        return urlsplit(self.access_url.get_secret_value())
+class AllowlistEntry(BaseModel):
+    """A self-hosted provider this config adds to the built-in allowlist.
+
+    Editing this entry in the config file is deliberately the only way
+    to add one -- see `provider_allowlist.py` for why there is no flag
+    and no prompt.
+    """
+
+    slug: str
+    label: str
+    root: str
+
+    def as_provider_entry(self) -> ProviderEntry:
+        """Convert to an allowlist entry, validating the slug and the root."""
+        try:
+            root = parse_root(self.root)
+        except UrlValidationError as exc:
+            # UrlValidationError is not a ValueError, so pydantic would let it
+            # escape as a traceback rather than reporting it as a config error.
+            # Its message is built for display and carries no credentials.
+            raise ValueError(str(exc)) from None
+        return ProviderEntry(slug=self.slug, label=self.label, root=root)
 
 
 class ClientAuth(BaseModel):
@@ -52,14 +64,39 @@ class ClientAuth(BaseModel):
 
 
 class Config(BaseModel):
+    """The parsed config file.
+
+    Treated as read-only once `load_config` returns: nothing mutates a Config,
+    and nothing rebinds app.state.config. Validators here may therefore
+    establish invariants -- see _check_provider_keys -- that hold for the
+    object's whole lifetime.
+    """
+
     bind_host: str = "127.0.0.1"
     bind_port: int = 8080
     # Schema and internal types are already a list for the multi-provider version to come;
     # this version only supports exactly one.
     providers: list[Provider] = Field(min_length=1, max_length=1)
+    allowlist: list[AllowlistEntry] = []
     client: ClientAuth
     claim_token: SecretStr
     base_url: str
+
+    def provider_entries(self) -> tuple[ProviderEntry, ...]:
+        """Every provider a token may be claimed from: the built-in ones plus this config's."""
+        return merged_providers(entry.as_provider_entry() for entry in self.allowlist)
+
+    @model_validator(mode="after")
+    def _check_provider_keys(self) -> Config:
+        """Fail at load time on a provider_key no allowlist entry defines.
+
+        Checked here rather than at first use so that a dangling reference is
+        reported by every command, not just the one that would dereference it.
+        """
+        entries = self.provider_entries()
+        for provider in self.providers:
+            _ = find_provider(entries, provider.provider_key)
+        return self
 
     @field_validator("claim_token")
     @classmethod
@@ -100,7 +137,7 @@ def default_config_path() -> Path:
     return Path(user_config_dir(APP_NAME)) / "config.toml"
 
 
-def _warn_if_permissive(path: Path) -> None:
+def warn_if_permissive(path: Path) -> None:
     mode = path.stat().st_mode
     if mode & (stat.S_IRWXG | stat.S_IRWXO):
         print(
@@ -119,7 +156,7 @@ def load_config(path: Path) -> Config:
         msg = f"cannot read config file {path}: {exc}"
         raise ConfigError(msg) from exc
 
-    _warn_if_permissive(path)
+    warn_if_permissive(path)
 
     try:
         data = tomllib.loads(raw)
