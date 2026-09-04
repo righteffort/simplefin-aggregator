@@ -58,7 +58,18 @@ chmod 600 "$CONFIG_FILE"
 echo "==> Starting simplefin-aggregator on 127.0.0.1:${PORT}..."
 uv run simplefin-aggregator serve --config "$CONFIG_FILE" &
 SERVER_PID=$!
-sleep 1.5
+
+echo "==> Waiting for the server to start listening..."
+for _ in $(seq 1 50); do
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "server process exited before it started listening" >&2
+    exit 1
+  fi
+  if curl -sS -o /dev/null "http://127.0.0.1:${PORT}/simplefin/info"; then
+    break
+  fi
+  sleep 0.2
+done
 
 echo
 echo "==> GET /simplefin/info"

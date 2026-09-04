@@ -1,5 +1,6 @@
 """Configuration model and loading for simplefin-aggregator."""
 
+import ipaddress
 import stat
 import sys
 import tomllib
@@ -79,7 +80,20 @@ class Config(BaseModel):
         if parsed.hostname is None:
             msg = "base_url must include a host"
             raise ValueError(msg)
+        if parsed.username is not None or parsed.password is not None:
+            msg = "base_url must not include user-info"
+            raise ValueError(msg)
+        if parsed.scheme == "http" and not _is_loopback(parsed.hostname):
+            msg = "base_url must use https unless the host is a loopback address"
+            raise ValueError(msg)
         return value
+
+
+def _is_loopback(hostname: str) -> bool:
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 def default_config_path() -> Path:
@@ -124,4 +138,4 @@ def load_config(path: Path) -> Config:
             for error in exc.errors(include_url=False, include_input=False)
         )
         msg = f"invalid config in {path}:\n{details}"
-        raise ConfigError(msg) from exc
+        raise ConfigError(msg) from None

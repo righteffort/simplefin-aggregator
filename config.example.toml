@@ -19,7 +19,7 @@ claim_token = "replace-with-a-long-random-token"
 
 [client]
 # Basic-auth credentials the client (for example, Actual Budget)
-# must present to GET /simplefin/accounts and GET /simplefin/info.
+# must present to GET /simplefin/accounts.
 username = "actual-budget"
 password = "replace-with-a-strong-password"
 

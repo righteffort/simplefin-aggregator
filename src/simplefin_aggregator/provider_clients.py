@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from urllib.parse import urlunsplit
+from urllib.parse import unquote, urlunsplit
 
 import httpx2
 
@@ -20,12 +20,14 @@ def build_provider_client(
     """One AsyncClient per provider. Credentials go via `auth=`, not the URL."""
     parsed = provider.parsed_access_url()
     netloc = parsed.hostname or ""
+    if ":" in netloc:
+        netloc = f"[{netloc}]"
     if parsed.port is not None:
         netloc = f"{netloc}:{parsed.port}"
     base_url = urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
     return httpx2.AsyncClient(
         base_url=base_url,
-        auth=(parsed.username or "", parsed.password or ""),
+        auth=(unquote(parsed.username or ""), unquote(parsed.password or "")),
         timeout=timeout,
         follow_redirects=True,
     )

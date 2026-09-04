@@ -99,7 +99,7 @@ In Actual Budget (or any other SimpleFIN client), when it asks for a SimpleFIN
 setup token, give it that string. The app will decode it, POST to the claim
 URL, and receive back this aggregator's access URL — built from your
 configured app `username`/`password` and `base_url` — which it then uses for
-all subsequent `/accounts` and `/info` requests.
+all subsequent `/accounts` requests.
 
 ## The repeatable-claim deviation
 
@@ -125,8 +125,7 @@ server.
     app credentials); proxies to the configured provider, forwarding
     `start-date`, `end-date`, `pending`, `account` (repeatable),
     `balances-only`, and `version` verbatim.
-  - `GET /simplefin/info` — proxies the provider's response; no auth required,
-    matching upstream SimpleFIN behavior.
+  - `GET /simplefin/info` — proxies the provider's response; no auth required.
 
 A provider error (any non-2xx) is passed through with the same status and
 body. A provider that's unreachable (DNS failure, connection refused, timeout)

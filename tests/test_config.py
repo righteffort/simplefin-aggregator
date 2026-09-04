@@ -72,6 +72,68 @@ def test_load_config_rejects_non_https_access_url(tmp_path: Path) -> None:
     assert "user:pass" not in str(exc_info.value)
 
 
+def test_load_config_accepts_http_base_url_on_loopback_ipv6(tmp_path: Path) -> None:
+    ok_toml = VALID_TOML.replace(
+        'base_url = "http://127.0.0.1:8080"', 'base_url = "http://[::1]:8080"'
+    )
+    path = _write(tmp_path, ok_toml)
+
+    config = load_config(path)
+
+    assert config.base_url == "http://[::1]:8080"
+
+
+def test_load_config_rejects_http_base_url_on_non_loopback_ip(tmp_path: Path) -> None:
+    bad_toml = VALID_TOML.replace(
+        'base_url = "http://127.0.0.1:8080"', 'base_url = "http://192.168.1.10:8080"'
+    )
+    path = _write(tmp_path, bad_toml)
+
+    with pytest.raises(ConfigError, match="https"):
+        _ = load_config(path)
+
+
+def test_load_config_rejects_http_base_url_on_hostname(tmp_path: Path) -> None:
+    bad_toml = VALID_TOML.replace(
+        'base_url = "http://127.0.0.1:8080"', 'base_url = "http://localhost:8080"'
+    )
+    path = _write(tmp_path, bad_toml)
+
+    with pytest.raises(ConfigError, match="https"):
+        _ = load_config(path)
+
+
+def test_load_config_accepts_https_base_url_on_non_loopback_host(tmp_path: Path) -> None:
+    ok_toml = VALID_TOML.replace(
+        'base_url = "http://127.0.0.1:8080"', 'base_url = "https://aggregator.example.com"'
+    )
+    path = _write(tmp_path, ok_toml)
+
+    config = load_config(path)
+
+    assert config.base_url == "https://aggregator.example.com"
+
+
+def test_load_config_rejects_base_url_with_userinfo(tmp_path: Path) -> None:
+    bad_toml = VALID_TOML.replace(
+        'base_url = "http://127.0.0.1:8080"', 'base_url = "http://olduser:oldpass@127.0.0.1:8080"'
+    )
+    path = _write(tmp_path, bad_toml)
+
+    with pytest.raises(ConfigError, match="base_url"):
+        _ = load_config(path)
+
+
+def test_load_config_rejects_base_url_with_username_only(tmp_path: Path) -> None:
+    bad_toml = VALID_TOML.replace(
+        'base_url = "http://127.0.0.1:8080"', 'base_url = "http://olduser@127.0.0.1:8080"'
+    )
+    path = _write(tmp_path, bad_toml)
+
+    with pytest.raises(ConfigError, match="base_url"):
+        _ = load_config(path)
+
+
 def test_load_config_rejects_claim_token_with_slash(tmp_path: Path) -> None:
     bad_toml = VALID_TOML.replace(
         'claim_token = "s3cret-claim-token"', 'claim_token = "s3cret/claim/token"'

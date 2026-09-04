@@ -23,6 +23,7 @@ def test_info_proxies_provider_response_unchanged() -> None:
         response = client.get("/simplefin/info")
 
     assert response.status_code == 200
+    assert response.headers["content-type"] == "application/json"
     assert response.content == provider_body
 
 
