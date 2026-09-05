@@ -33,9 +33,13 @@ reviews:
         - Softening the allowlist into a CLI flag or an interactive "add this
           origin?" prompt. A deliberate config-file edit is the only escape
           hatch, by design.
-        - Default-port normalization, trailing-slash repair, or any other
-          canonicalization of provider-supplied URLs. Non-canonical URLs are
-          meant to fail to match, not to be repaired.
+        - Loosening the match to accept a URL that `httpx2.URL` does not
+          normalize to the root: a trailing dot on the host, an extra path
+          segment, a doubled slash. Provider-supplied URLs are normalized by
+          `httpx2.URL` -- the same type that later issues the request, which is
+          what makes the string matched and the string fetched the same one --
+          and anything that survives normalization is meant to fail to match
+          rather than be repaired.
         - Dereferencing an account's `currency` field as a URL.
         - Multi-tenancy, rate limiting, and credential encryption at rest
           beyond correct file permissions.

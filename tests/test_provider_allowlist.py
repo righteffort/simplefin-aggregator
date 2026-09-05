@@ -45,7 +45,7 @@ def test_static_provider_root_is_canonical(provider: ProviderEntry) -> None:
     """Each root survives a re-parse unchanged, so matching sees what is written here."""
     root = provider.root
     assert root.origin_and_path.endswith("/")
-    assert not root.has_userinfo
+    assert not root.has_creds
     assert parse_root(root.origin_and_path).origin_and_path == root.origin_and_path
     assert provider.label
 

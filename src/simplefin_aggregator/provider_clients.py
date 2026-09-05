@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from urllib.parse import unquote
 
 import httpx2
 
@@ -26,10 +25,7 @@ def build_provider_client(
         # a provider root, so it carries no synthesized trailing slash; and
         # because the credentials it deliberately omits are supplied below.
         base_url=access_url.origin_and_path,
-        # urlsplit does not percent-decode userinfo, so a credential
-        # containing a reserved character arrives here still encoded and has
-        # to be decoded before it goes into an Authorization header.
-        auth=(unquote(access_url.username or ""), unquote(access_url.password or "")),
+        auth=(access_url.username, access_url.password),
         timeout=timeout,
         follow_redirects=True,
     )

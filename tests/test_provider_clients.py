@@ -32,7 +32,7 @@ def test_build_provider_client_brackets_ipv6_host() -> None:
 
 def test_build_provider_client_decodes_percent_encoded_credentials() -> None:
     # "user@name" / "p@ss" as they'd have to appear percent-encoded in a URL's
-    # userinfo. urlsplit does not decode them, so build_provider_client must.
+    # userinfo. They reach the Authorization header decoded.
     access_url = validate_access_url(
         parse_root("https://provider.example.com/simplefin"),
         "https://user%40name:p%40ss@provider.example.com/simplefin",

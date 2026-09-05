@@ -6,6 +6,7 @@ import stat
 import sys
 import tomllib
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import quote, urlsplit
 
 from platformdirs import user_config_dir
@@ -13,6 +14,10 @@ from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validat
 
 from .provider_allowlist import ProviderEntry, find_provider, merged_providers
 from .url_validation import UrlValidationError, is_loopback_host, parse_root
+
+
+if TYPE_CHECKING:
+    from .url_validation import NormalizedUrl
 
 
 APP_NAME = "simplefin-aggregator"
@@ -31,6 +36,19 @@ class Provider(BaseModel):
     provider_key: str
 
 
+def _parse_root_or_value_error(raw: str) -> NormalizedUrl:
+    """`parse_root`, reporting failure the way pydantic can render it.
+
+    UrlValidationError is not a ValueError, so pydantic would let it escape as
+    a traceback rather than reporting it as a config error. Its message is
+    built for display and carries no credentials.
+    """
+    try:
+        return parse_root(raw)
+    except UrlValidationError as exc:
+        raise ValueError(str(exc)) from None
+
+
 class AllowlistEntry(BaseModel):
     """A self-hosted provider this config adds to the built-in allowlist.
 
@@ -43,16 +61,23 @@ class AllowlistEntry(BaseModel):
     label: str
     root: str
 
+    @field_validator("root")
+    @classmethod
+    def _validate_root(cls, value: str) -> str:
+        """Reject a bad root as a fault of this field, not of the config as a whole.
+
+        Left to the model-level check below, a bad root is reported against the
+        whole `Config`, so the message names no entry and pydantic's own
+        rendering of the rejected input is the entire config file.
+        """
+        _ = _parse_root_or_value_error(value)
+        return value
+
     def as_provider_entry(self) -> ProviderEntry:
         """Convert to an allowlist entry, validating the slug and the root."""
-        try:
-            root = parse_root(self.root)
-        except UrlValidationError as exc:
-            # UrlValidationError is not a ValueError, so pydantic would let it
-            # escape as a traceback rather than reporting it as a config error.
-            # Its message is built for display and carries no credentials.
-            raise ValueError(str(exc)) from None
-        return ProviderEntry(slug=self.slug, label=self.label, root=root)
+        return ProviderEntry(
+            slug=self.slug, label=self.label, root=_parse_root_or_value_error(self.root)
+        )
 
 
 class ClientAuth(BaseModel):
@@ -162,8 +187,11 @@ def load_config(path: Path) -> Config:
         return Config.model_validate(data)
     except ValidationError as exc:
         # Never str(exc) directly: pydantic's default rendering includes each
-        # field's raw input value, which would print credentials (access_url,
-        # claim_token, passwords) straight to stderr on a validation failure.
+        # field's raw input value, which would print credentials (a provider
+        # root's userinfo, claim_token, passwords) straight to stderr on a
+        # validation failure. What keeps them out is that the message is built
+        # from `loc` and `msg` alone; include_input=False is belt-and-braces
+        # over a value this never reads.
         details = "\n".join(
             f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
             for error in exc.errors(include_url=False, include_input=False)

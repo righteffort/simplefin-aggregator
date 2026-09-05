@@ -277,6 +277,7 @@ def test_load_config_rejects_a_malformed_allowlist_slug(tmp_path: Path) -> None:
 ALLOWLIST_ROOT_CASES = [
     ("http://provider.example.com/simplefin", "must use https"),
     ("https://user:pass@provider.example.com/simplefin", "must not contain credentials"),
+    ("https://provider.example.com:99999/simplefin", "not a valid URL"),
     ("https://provider.example.com/simplefin?x=1", "query string or fragment"),
     ("https://provider.example.com/simplefin#f", "query string or fragment"),
     ("/simplefin", "has no host"),
@@ -288,12 +289,23 @@ def test_load_config_rejects_a_bad_allowlist_root(tmp_path: Path, root: str, exp
     bad_root = VALID_TOML.replace(ROOT_LINE, f'root = "{root}"')
     path = _write(tmp_path, bad_root)
 
-    with pytest.raises(ConfigError, match=expected) as exc_info:
+    with pytest.raises(ConfigError, match=expected):
         _ = load_config(path)
 
-    # The rejected root is reported through UrlValidationError's message, which
-    # strips credentials; pydantic's own rendering of the input is suppressed.
-    assert "user:pass" not in str(exc_info.value)
+
+def test_rejected_allowlist_root_error_does_not_quote_the_credentials(tmp_path: Path) -> None:
+    """A rejected root is named in the error, but never by quoting the raw input back."""
+    root = "https://leak-username:leak-password@provider.example.com/simplefin"
+    path = _write(tmp_path, VALID_TOML.replace(ROOT_LINE, f'root = "{root}"'))
+
+    with pytest.raises(ConfigError) as exc_info:
+        _ = load_config(path)
+
+    message = str(exc_info.value)
+    assert "leak-username" not in message
+    assert "leak-password" not in message
+    # Named as a fault of the entry, so a config with several says which one.
+    assert "allowlist.0.root" in message
 
 
 def test_load_config_accepts_a_loopback_http_allowlist_root(tmp_path: Path) -> None:

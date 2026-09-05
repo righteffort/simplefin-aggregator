@@ -19,9 +19,9 @@ from simplefin_aggregator.provider_access_urls import (
 
 ACCESS_URL = "https://user:s3cret-provider-password@provider.invalid/simplefin"
 OTHER_ACCESS_URL = "https://other:other-password@other.invalid/simplefin"
-# Deliberately short: pydantic elides the middle of a long rejected input, so a
-# long URL can hide its own password and make the leak test below pass for the
-# wrong reason.
+# Deliberately short: a long rejected value can be reported with its middle
+# elided, which would hide the password on its own and make the leak test below
+# pass for the wrong reason.
 SHORT_ACCESS_URL = "https://u:s3cret-short@h.invalid/x"
 
 
@@ -189,8 +189,8 @@ def test_malformed_json_is_a_clear_error(tmp_path: Path) -> None:
 
 def test_wrong_shape_is_a_clear_error_without_the_access_url(tmp_path: Path) -> None:
     path = access_urls_path(tmp_path)
-    # A value in the wrong shape: pydantic's default rendering of the error
-    # would quote the rejected input, credentials and all.
+    # A value in the wrong shape, so the error has to name the problem without
+    # quoting back the input it rejected -- credentials and all.
     _ = path.write_text(f'{{"access_urls": {{"redbark": ["{SHORT_ACCESS_URL}"]}}}}')
 
     with pytest.raises(AccessUrlStoreError) as excinfo:
