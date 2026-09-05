@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import stat
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -14,10 +15,6 @@ from simplefin_aggregator.provider_access_urls import (
     load_access_urls,
     save_access_url,
 )
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 ACCESS_URL = "https://user:s3cret-provider-password@provider.invalid/simplefin"
@@ -104,6 +101,59 @@ def test_no_temporary_file_is_left_behind(tmp_path: Path) -> None:
     save_access_url(path, "redbark", ACCESS_URL)
 
     assert [child.name for child in tmp_path.iterdir()] == [ACCESS_URLS_FILENAME]
+
+
+def test_save_does_not_follow_a_symlink_at_a_guessable_temporary_path(tmp_path: Path) -> None:
+    """`--cachedir` may be a directory another local user can write."""
+    decoy = tmp_path / "decoy"
+    _ = decoy.write_text("")
+    (tmp_path / f"{ACCESS_URLS_FILENAME}.tmp").symlink_to(decoy)
+    path = access_urls_path(tmp_path)
+
+    save_access_url(path, "redbark", ACCESS_URL)
+
+    assert decoy.read_text() == ""
+    assert load_access_urls(path)["redbark"].get_secret_value() == ACCESS_URL
+
+
+def test_save_fsyncs_before_renaming(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rename that reaches disk before the data blocks yields an empty store."""
+    path = access_urls_path(tmp_path)
+    events: list[str] = []
+    real_fsync = os.fsync
+    real_replace = Path.replace
+
+    def recording_fsync(fd: int) -> None:
+        events.append("fsync")
+        real_fsync(fd)
+
+    def recording_replace(self: Path, target: str | Path) -> Path:
+        events.append("replace")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(os, "fsync", recording_fsync)
+    monkeypatch.setattr(Path, "replace", recording_replace)
+
+    save_access_url(path, "redbark", ACCESS_URL)
+
+    assert events == ["fsync", "replace"]
+
+
+def test_save_removes_the_temporary_file_when_the_rename_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cleanup must survive a non-OSError failure, which `except OSError` missed."""
+    path = access_urls_path(tmp_path)
+
+    def exploding_replace(_self: Path, _target: str | Path) -> Path:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Path, "replace", exploding_replace)
+
+    with pytest.raises(KeyboardInterrupt):
+        save_access_url(path, "redbark", ACCESS_URL)
+
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_load_warns_on_permissive_file_mode(

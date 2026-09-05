@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -98,11 +99,23 @@ def save_access_url(path: Path, slug: str, access_url: str) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Write-then-rename: a crash mid-write must not leave the file truncated,
-    # since what it holds cannot be regenerated. The temporary file is created
-    # 0600 and keeps that mode across the rename, so the store ends up 0600
-    # even if an earlier version of it did not.
-    temporary = path.with_name(f"{path.name}.tmp")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w") as handle:
-        _ = handle.write(contents + "\n")
-    _ = temporary.replace(path)
+    # since what it holds cannot be regenerated. `mkstemp` creates with 0600, so
+    # the persisted file has 0600 even if the prior version did not.
+    descriptor, temporary_name = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w") as handle:
+            _ = handle.write(contents + "\n")
+            # fsync before the rename, not just close. Otherwise the rename can
+            # reach disk while the data blocks have not, and a power loss
+            # leaves an empty file where the one thing this app cannot
+            # regenerate used to be.
+            handle.flush()
+            os.fsync(handle.fileno())
+        _ = temporary.replace(path)
+    finally:
+        # A successful replace leaves nothing at the temporary name, so this is
+        # a no-op then. On any failure -- including KeyboardInterrupt, which an
+        # `except OSError` would miss -- it keeps a partial file holding
+        # credentials from lingering in the directory.
+        temporary.unlink(missing_ok=True)

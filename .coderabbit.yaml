@@ -1,0 +1,68 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+reviews:
+  # Default is "chill", which suppresses lower-confidence findings. This repo
+  # would rather triage nits by hand than miss something.
+  profile: assertive
+
+  path_instructions:
+    - path: "src/simplefin_aggregator/**"
+      instructions: |
+        This is a single-user CLI plus a loopback-only HTTP server that
+        aggregates SimpleFIN providers.
+
+        Threat model: phishing and paste error. The user obtains a setup token
+        from a provider's web page and pastes it into the CLI. A lookalike or
+        Unicode-homograph domain yields a token pointing entirely at attacker
+        infrastructure; the CLI then stores an attacker-controlled access URL
+        and sends Basic Auth credentials to the attacker on every sync. The
+        only control that works is exact matching of provider URLs against a
+        fixed set of known-good origins (url_validation.py,
+        provider_allowlist.py).
+
+        Out of scope. Do not report these -- they address a different threat
+        model and will be rejected:
+        - SSRF defenses: destination IP blocking (loopback, link-local,
+          RFC1918), DNS pre-resolution or pinning, safeurl-style wrappers.
+          There is one principal and no confused deputy, and TLS binds
+          identity to the hostname, not to the resolved address.
+        - Human confirmation prompts ("is this the host you just visited?") as
+          a substitute for the allowlist. They fail precisely in the phishing
+          case, because the user's memory of where they were is the attacker's
+          domain.
+        - Softening the allowlist into a CLI flag or an interactive "add this
+          origin?" prompt. A deliberate config-file edit is the only escape
+          hatch, by design.
+        - Default-port normalization, trailing-slash repair, or any other
+          canonicalization of provider-supplied URLs. Non-canonical URLs are
+          meant to fail to match, not to be repaired.
+        - Dereferencing an account's `currency` field as a URL.
+        - Multi-tenancy, rate limiting, and credential encryption at rest
+          beyond correct file permissions.
+
+        Especially worth reporting:
+        - Any path where an access URL, a setup token, or a Basic Auth
+          password could reach a log line, an exception message, stdout, or a
+          pydantic ValidationError rendering. Only
+          `NormalizedUrl.origin_and_path`, which is credential-free, may be
+          rendered.
+        - Local-filesystem exposure of the access URL store or config.toml:
+          file modes, directory modes, symlink following, TOCTOU on write.
+        - Any way a redirect could be followed, or a 3xx treated as success,
+          on the claim POST or an /accounts GET.
+        - Errors in the prefix match in url_validation.py, particularly a
+          candidate URL that could match a root it should not.
+
+    - path: "tests/**"
+      instructions: |
+        Flag vacuous tests: assertions that would still pass with the code
+        under test removed or inverted, mocking that stubs out the very
+        behavior being asserted, and tests that assert on an error message
+        string without asserting the security-relevant effect.
+        Tests must never make real outbound network calls.
+
+    - path: "docs/**"
+      instructions: |
+        docs/ARCHITECTURE.md is knowingly stale for the in-progress provider
+        allowlist work and is scheduled to be rewritten as a later step. Report
+        a documentation mismatch there only once, as a single finding.

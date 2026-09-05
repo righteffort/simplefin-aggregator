@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ipaddress
 import stat
 import sys
 import tomllib
@@ -13,7 +12,7 @@ from platformdirs import user_config_dir
 from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator, model_validator
 
 from .provider_allowlist import ProviderEntry, find_provider, merged_providers
-from .url_validation import UrlValidationError, parse_root
+from .url_validation import UrlValidationError, is_loopback_host, parse_root
 
 
 APP_NAME = "simplefin-aggregator"
@@ -120,17 +119,12 @@ class Config(BaseModel):
         if parsed.username is not None or parsed.password is not None:
             msg = "base_url must not include user-info"
             raise ValueError(msg)
-        if parsed.scheme == "http" and not _is_loopback(parsed.hostname):
-            msg = "base_url must use https unless the host is a loopback address"
+        # Plaintext only where the traffic cannot leave the machine. See
+        # is_loopback_host for why `localhost` does not qualify.
+        if parsed.scheme == "http" and not is_loopback_host(parsed.hostname):
+            msg = "base_url must use https unless the host is a literal loopback IP address"
             raise ValueError(msg)
         return value
-
-
-def _is_loopback(hostname: str) -> bool:
-    try:
-        return ipaddress.ip_address(hostname).is_loopback
-    except ValueError:
-        return False
 
 
 def default_config_path() -> Path:
