@@ -23,11 +23,14 @@ normalize port or trailing period on hostname (e.g. we treat
 https://example.com.:433/ and https://example.com./ as different is
 for simplicity, not correctness.
 
-One property of that comparison is load-bearing: roots always end in `/`, so
-the prefix test cannot straddle a segment boundary. Without it a `/simplefin`
-root would match `/simplefin-evil`, and since the host is likewise followed by
-`/` (or `:port`), `simplefin.example` cannot prefix-match
-`simplefin.example.evil.test`.
+Two properties of that comparison are load-bearing. Roots always end in `/`,
+so the prefix test cannot straddle a segment boundary: without it a
+`/simplefin` root would match `/simplefin-evil`, and since the host is
+likewise followed by `/` (or `:port`), `simplefin.example` cannot prefix-match
+`simplefin.example.evil.test`. And candidate paths carry no `.` or `..`
+segment, because the prefix test reads a path literally while an HTTP client
+resolves it -- `/simplefin/../../evil` starts with `/simplefin/` as a string
+but requests `/evil`. Both are enforced in `parse_url`.
 
 """
 
@@ -35,16 +38,26 @@ from __future__ import annotations
 
 import ipaddress
 from dataclasses import dataclass, replace
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 
 class UrlValidationError(Exception):
     """A URL was rejected, with a message naming the URL and the specific problem.
 
-    Messages must never contain credentials. Build them from
-    `NormalizedUrl.origin_and_path`, which excludes userinfo by construction,
-    never from the raw URL string, which for an access URL contains the Basic
-    Auth password.
+    Messages must never contain credentials, and must not render the *path* of
+    a provider-supplied URL. Build them from `NormalizedUrl.origin`, never from
+    the raw URL string, which for an access URL contains the Basic Auth
+    password.
+
+    The path is withheld because a SimpleFIN claim URL carries the one-time
+    setup token in it. A user who pastes a genuine token but picks the wrong
+    provider from the menu gets a mismatch error, and that token is still live
+    and unclaimed -- printing it into terminal scrollback or a log hands anyone
+    who reads it a bearer credential. The origin is what identifies phishing,
+    so withholding the path costs nothing diagnostically.
+
+    A provider root is configuration rather than a secret, so messages about
+    one may name it in full via `origin_and_path`.
     """
 
 
@@ -56,12 +69,15 @@ class NormalizedUrl:
     and must not derive a field other than via `parse_url`.
 
     `origin_and_path` is scheme, host, port and path only. It carries no
-    credentials, which makes it both the string matching compares and the only
-    form of a URL that is safe to log, display, or put in an error message.
+    credentials, which makes it the string that matching compares.
 
-    Never fetch it. It has no credentials, and for a provider root it carries
-    a trailing slash the configured string need not have had. It is a
-    comparison and display string, not a URL to request.
+    `origin` drops the path as well, leaving scheme, host and port. It is the
+    form to render in an error message, because a claim URL's path holds the
+    one-time setup token -- see `UrlValidationError`.
+
+    Never fetch either one. Neither has credentials, and for a provider root
+    `origin_and_path` carries a trailing slash the configured string need not
+    have had. They are comparison and display strings, not URLs to request.
     """
 
     scheme: str
@@ -71,6 +87,7 @@ class NormalizedUrl:
     """username returned from urlsplit, *not* percent-decoded."""
     password: str | None
     """password returned from urlsplit, *not* percent-decoded."""
+    origin: str
     origin_and_path: str
 
     @property
@@ -84,6 +101,16 @@ def _parse_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None
         return ipaddress.ip_address(host)
     except ValueError:
         return None
+
+
+def is_loopback_host(host: str) -> bool:
+    """Whether `host` is a literal loopback IP address (127.0.0.0/8 or ::1).
+
+    Never a name, `localhost` included: a name resolves through DNS or a hosts
+    file and can be pointed elsewhere.
+    """
+    ip = _parse_ip(host)
+    return ip is not None and ip.is_loopback
 
 
 def parse_url(raw: str) -> NormalizedUrl:
@@ -136,7 +163,8 @@ def parse_url(raw: str) -> NormalizedUrl:
     netloc = f"[{hostname}]" if isinstance(_parse_ip(hostname), ipaddress.IPv6Address) else hostname
     if port is not None:
         netloc = f"{netloc}:{port}"
-    origin_and_path = f"{parsed.scheme}://{netloc}{parsed.path}"
+    origin = f"{parsed.scheme}://{netloc}"
+    origin_and_path = f"{origin}{parsed.path}"
 
     # A URL is ASCII by definition (RFC 3986); anything else must be
     # percent-encoded, so nothing legitimate is turned away here. This matters
@@ -147,7 +175,12 @@ def parse_url(raw: str) -> NormalizedUrl:
     # A non-ASCII *host* is reported above with a more specific message, so by
     # here that case is already handled.
     if any(not ("\x21" <= character <= "\x7e") for character in raw):
-        # ascii() escapes anything unprintable, so the message is safe to show.
+        # The one message that renders a candidate's path, since the offending
+        # characters are usually in it and naming only the origin would leave
+        # the user nothing to act on. Safe here because a URL carrying control
+        # characters is malformed rather than a live setup token: a real one is
+        # percent-encoded, so it cannot reach this branch. ascii() escapes
+        # anything unprintable, so the message cannot drive the terminal.
         unprintable_msg = (
             f"URL {origin_and_path!a} contains characters that are not printable ASCII"
         )
@@ -157,8 +190,32 @@ def parse_url(raw: str) -> NormalizedUrl:
     # which are both the empty string -- falsy -- for a URL ending in a bare
     # "?" or "#".
     if "?" in raw or "#" in raw:
-        query_msg = f"{origin_and_path} must not contain a query string or fragment"
+        query_msg = f"{origin} must not contain a query string or fragment"
         raise UrlValidationError(query_msg)
+
+    # Reject a "." or ".." path segment rather than resolving it. Matching
+    # compares paths as written, but httpx2 resolves dot segments when it builds
+    # a request from `base_url`, so the two disagree about what a path means:
+    # "/simplefin/../../evil" prefix-matches a "/simplefin/" root as a string,
+    # then requests "/evil". The percent-encoded spellings go too -- httpx2
+    # leaves "%2e%2e" alone, but RFC 3986 makes "%2E" equivalent to "." once
+    # normalized, so an origin server is entitled to resolve it.
+    #
+    # Normalizing instead is tempting, since `httpx2.URL` will resolve dot
+    # segments for us, but it does not close this hole and opens another. For
+    # the encoded spelling its own views disagree -- `str()` keeps "%2e%2e"
+    # verbatim while `.path` decodes it to "/../.." without resolving -- so the
+    # check below would still be needed. And it strips default ports, which
+    # this module deliberately does not do. The standard library is no help
+    # either: urljoin applies remove_dot_segments only to a relative reference,
+    # and posixpath.normpath is filesystem semantics, ignoring "%2e",
+    # collapsing "//", and stripping the trailing slash roots depend on.
+    #
+    # tests/test_url_validation.py asserts the agreement this relies on: for
+    # every URL accepted here, the path httpx2 requests is the path we matched.
+    if any(unquote(segment) in (".", "..") for segment in parsed.path.split("/")):
+        dot_segment_msg = f"{origin} must not contain a '.' or '..' path segment"
+        raise UrlValidationError(dot_segment_msg)
 
     return NormalizedUrl(
         scheme=parsed.scheme,
@@ -166,6 +223,7 @@ def parse_url(raw: str) -> NormalizedUrl:
         port=port,
         username=parsed.username,
         password=parsed.password,
+        origin=origin,
         origin_and_path=origin_and_path,
     )
 
@@ -178,10 +236,9 @@ def parse_root(raw: str) -> NormalizedUrl:
         userinfo_msg = f"provider root {root.origin_and_path} must not contain credentials"
         raise UrlValidationError(userinfo_msg)
 
-    # https is always allowed. http is allowed only for a literal loopback IP
-    # address, for a self-hosted server reached over the loopback interface.
-    ip = _parse_ip(root.host)
-    if root.scheme != "https" and not (root.scheme == "http" and ip is not None and ip.is_loopback):
+    # https is always allowed. http is allowed only for a self-hosted server
+    # reached over the loopback interface.
+    if not (root.scheme == "https" or (root.scheme == "http" and is_loopback_host(root.host))):
         scheme_msg = (
             f"provider root {root.origin_and_path} must use https, "
             "or http with a literal loopback IP address as the host"
@@ -206,7 +263,7 @@ def _check_matches_root(root: NormalizedUrl, url: NormalizedUrl, kind: str, prov
     # while still failing on a segment boundary ("https://h/simplefin-evil").
     if not (url.origin_and_path + "/").startswith(root.origin_and_path):
         msg = (
-            f"{kind} {url.origin_and_path} is not valid for provider {provider!r}: "
+            f"{kind} {url.origin} is not valid for provider {provider!r}: "
             f"expected it to start with {root.origin_and_path}"
         )
         raise UrlValidationError(msg)
@@ -217,7 +274,7 @@ def validate_claim_url(root: NormalizedUrl, raw: str, *, provider: str) -> Norma
     url = parse_url(raw)
     # A claim URL has no need for credentials.
     if url.has_userinfo:
-        msg = f"claim URL {url.origin_and_path} must not contain credentials"
+        msg = f"claim URL {url.origin} must not contain credentials"
         raise UrlValidationError(msg)
     _check_matches_root(root, url, "claim URL", provider)
     return url
@@ -237,7 +294,7 @@ def validate_access_url(root: NormalizedUrl, raw: str, *, provider: str) -> Norm
     """
     url = parse_url(raw)
     if not url.has_userinfo:
-        msg = f"access URL {url.origin_and_path} must contain credentials"
+        msg = f"access URL {url.origin} must contain credentials"
         raise UrlValidationError(msg)
     _check_matches_root(root, url, "access URL", provider)
     return url

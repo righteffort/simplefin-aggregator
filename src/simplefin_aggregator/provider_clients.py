@@ -21,7 +21,7 @@ def build_provider_client(
     return httpx2.AsyncClient(
         # The one place `origin_and_path` feeds a network request, against
         # url_validation.py's "never fetch it" rule. It holds here because
-        # httpx joins request paths onto `base_url` rather than fetching it as
+        # httpx2 joins request paths onto `base_url` rather than fetching it as
         # given; because this value is always a validated access URL and never
         # a provider root, so it carries no synthesized trailing slash; and
         # because the credentials it deliberately omits are supplied below.
