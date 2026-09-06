@@ -1,7 +1,7 @@
 # Architecture
 
 This is a developer/agent-facing map of `simplefin-aggregator`. `README.md`
-covers how to use it.
+covers how to use it; `AGENTS.md` covers how to work on it.
 
 It is a map, not a second copy of the code: it says how the pieces fit, which
 invariants hold across them, and which are load-bearing enough that changing
@@ -446,10 +446,9 @@ compromise both messages.
   via `input=`. No `unittest.mock` beyond `monkeypatch`, no `respx` (dropped
   when the project migrated from `httpx` to `httpx2` — respx doesn't support
   `httpx2`).
-- **No real network, ever, in the automated suite.** The one place that *does*
-  hit a real network — `scripts/manual_verify.sh` against the live SimpleFIN
-  demo bridge — is explicitly separate, human-run, and documented as such in
-  the README. Never add a test that makes a real outbound call.
+- **No real network in the automated suite.** The one place that *does* hit a
+  real network — `scripts/manual_verify.sh` against the live SimpleFIN demo
+  bridge — is separate, human-run, and documented as such in the README.
 - **`tests/support.py`** holds the shared fixtures: `make_config` builds a
   `Config` through `model_validate(dict)`, the same path `load_config` uses
   (direct kwargs trip up basedpyright on `SecretStr` fields);
@@ -458,10 +457,8 @@ compromise both messages.
   an ordering constraint its docstring explains. The fixture provider is a
   `custom_providers` entry, so most tests exercise the config-supplied path
   rather than a built-in root.
-- Tests that pin a *requirement* and tests that pin *current behaviour* (an
-  input the code declines to normalize, a gap left open on purpose, a
-  dependency's exact output) are labelled as such, so a future implementation
-  changing one knows whether it is allowed to.
+- Tests are labelled to say whether they pin a *requirement* or *current
+  behaviour*; `AGENTS.md` has the rule.
 - Reaching into `app.py`'s private `_AppState` from test code is accepted
   (`tests/support.py` imports it with a `# pyright: ignore[reportPrivateUsage]`)
   — it's the established pattern for tests that need to touch internal wiring.
@@ -471,10 +468,7 @@ compromise both messages.
   arbitrary — passing a bare `Sequence[tuple[str, str]]` fails basedpyright
   under httpx2's `QueryParamTypes` (invariance on `list[tuple[...]]`); `tuple`
   is covariant and satisfies the stub.
-- Every basedpyright warning is treated as something to fix or explicitly
-  `# pyright: ignore[rule]` with a one-line reason — not just errors. Run
-  `ruff format --check .`, `ruff check .`, `basedpyright`, and `pytest` as one
-  verification pass after every change; a subset is not sufficient.
+- `AGENTS.md` has the verification pass every change is expected to survive.
 
 ## Deliberate deviations from the SimpleFIN spec
 
