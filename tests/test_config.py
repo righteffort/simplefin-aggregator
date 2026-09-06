@@ -43,6 +43,17 @@ def _write(tmp_path: Path, contents: str) -> Path:
     return config_path
 
 
+def test_load_config_tolerates_a_byte_order_mark(tmp_path: Path) -> None:
+    """Some editors write one; TOML would otherwise fail on line 1, column 1."""
+    path = tmp_path / "config.toml"
+    _ = path.write_text(VALID_TOML, encoding="utf-8-sig")
+    path.chmod(0o600)
+
+    config = load_config(path)
+
+    assert config.providers[0].provider_key == "my-bank"
+
+
 def test_load_config_parses_valid_file(tmp_path: Path) -> None:
     path = _write(tmp_path, VALID_TOML)
 
@@ -309,7 +320,7 @@ def test_rejected_allowlist_root_error_does_not_quote_the_credentials(tmp_path: 
 
 
 def test_load_config_accepts_a_loopback_http_allowlist_root(tmp_path: Path) -> None:
-    """The one non-https root allowed: a self-hosted provider on the loopback interface."""
+    """The one non-https root allowed: a provider on the loopback interface."""
     loopback = VALID_TOML.replace(ROOT_LINE, 'root = "http://127.0.0.1:8081/simplefin"')
 
     config = load_config(_write(tmp_path, loopback))

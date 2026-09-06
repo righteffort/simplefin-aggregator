@@ -62,12 +62,20 @@ def access_urls_path(cache_dir: Path | None = None) -> Path:
 def load_access_urls(path: Path) -> dict[str, SecretStr]:
     """Read the store. A file that is not there yet is empty, not an error."""
     try:
-        raw = path.read_text()
+        # utf-8, not the locale's, on both the read and the write below: JSON
+        # is UTF-8 by definition, and nothing in this file can be re-fetched if
+        # a locale change makes it unreadable.
+        raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
     except OSError as exc:
         msg = f"cannot read access URL file {path}: {exc}"
         raise AccessUrlStoreError(msg) from exc
+    except UnicodeDecodeError:
+        # Not the exception text: it quotes the byte it choked on, and this
+        # file holds credentials.
+        msg = f"access URL file {path} is not UTF-8 text"
+        raise AccessUrlStoreError(msg) from None
 
     warn_if_permissive(path)
 
@@ -91,6 +99,23 @@ def load_access_urls(path: Path) -> dict[str, SecretStr]:
         raise AccessUrlStoreError(msg) from None
 
 
+def check_can_save(path: Path) -> None:
+    """Create the store's directory and fail now if it is not writable.
+
+    `claim` calls this before spending the setup token, so that a directory it
+    cannot write to is reported while the token can still be claimed again.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    except OSError as exc:
+        msg = f"cannot create {path.parent}: {exc}"
+        raise AccessUrlStoreError(msg) from exc
+
+    if not os.access(path.parent, os.W_OK | os.X_OK):
+        msg = f"cannot write access URL file {path}: {path.parent} is not writable"
+        raise AccessUrlStoreError(msg)
+
+
 def save_access_url(path: Path, slug: str, access_url: str) -> None:
     """Record one provider's access URL, leaving the others in place."""
     stored = load_access_urls(path)
@@ -104,7 +129,7 @@ def save_access_url(path: Path, slug: str, access_url: str) -> None:
     descriptor, temporary_name = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
     temporary = Path(temporary_name)
     try:
-        with os.fdopen(descriptor, "w") as handle:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             _ = handle.write(contents + "\n")
             # fsync before the rename, not just close. Otherwise the rename can
             # reach disk while the data blocks have not, and a power loss

@@ -28,7 +28,7 @@ EXPECTED_STATIC_PROVIDERS = [
 ]
 
 
-def _entry(slug: str, root: str = "https://self-hosted.invalid/simplefin") -> ProviderEntry:
+def _entry(slug: str, root: str = "https://my-bridge.invalid/simplefin") -> ProviderEntry:
     return ProviderEntry(slug=slug, label=f"label for {slug}", root=parse_root(root))
 
 
@@ -55,7 +55,7 @@ def test_static_provider_labels_are_present() -> None:
 
 
 def test_merged_providers_keeps_static_entries_first() -> None:
-    extra = _entry("self-hosted")
+    extra = _entry("my-bridge")
 
     merged = merged_providers([extra])
 
@@ -68,15 +68,15 @@ def test_merged_providers_rejects_slug_colliding_with_static_entry() -> None:
 
 
 def test_merged_providers_rejects_slug_duplicated_between_config_entries() -> None:
-    with pytest.raises(ProviderAllowlistError, match="duplicate provider slug 'self-hosted'"):
-        _ = merged_providers([_entry("self-hosted"), _entry("self-hosted")])
+    with pytest.raises(ProviderAllowlistError, match="duplicate provider slug 'my-bridge'"):
+        _ = merged_providers([_entry("my-bridge"), _entry("my-bridge")])
 
 
 def test_find_provider_returns_the_matching_entry() -> None:
-    extra = _entry("self-hosted")
+    extra = _entry("my-bridge")
     providers = merged_providers([extra])
 
-    assert find_provider(providers, "self-hosted") is extra
+    assert find_provider(providers, "my-bridge") is extra
     assert find_provider(providers, "redbark").label == "Redbark"
 
 
@@ -90,6 +90,9 @@ def test_find_provider_rejects_an_absent_slug() -> None:
     # message lists what is actually configured.
     message = str(excinfo.value)
     assert "unknown provider 'redbarc'" in message
+    # And says how to reach a provider the built-in list does not name, since
+    # an unknown slug is as likely to be a missing entry as a typo.
+    assert "[[allowlist]]" in message
     assert "redbark" in message
 
 
@@ -102,12 +105,12 @@ BAD_ROOTS = [
 
 @pytest.mark.parametrize(("raw", "expected"), BAD_ROOTS)
 def test_allowlist_entry_root_is_rejected_with_a_reason(raw: str, expected: str) -> None:
-    """A self-hosted entry's root goes through parse_root, which names the problem."""
+    """A config-supplied entry's root goes through parse_root, which names the problem."""
     with pytest.raises(UrlValidationError, match=expected):
         _ = parse_root(raw)
 
 
-BAD_SLUGS = ["", "Redbark", "my bank", "my_bank", "café", "self-hosted\n", "a/b", "x\x1b[31m"]
+BAD_SLUGS = ["", "Redbark", "my bank", "my_bank", "café", "my-bridge\n", "a/b", "x\x1b[31m"]
 
 
 @pytest.mark.parametrize("slug", BAD_SLUGS)

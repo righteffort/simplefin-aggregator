@@ -3,8 +3,8 @@
 A setup token is a base64-encoded URL pasted in from a web page, so the URL
 inside it is attacker-influenceable input (see `url_validation.py` for the
 threat model). This module holds the known-good roots it is matched against:
-the built-in `KNOWN_PROVIDERS`, plus whatever self-hosted entries the user has
-written into their config file.
+the built-in `KNOWN_PROVIDERS`, plus whatever entries the user has written into
+their config file for a provider this list does not name.
 
 Adding an entry is deliberately a config-file edit and nothing else. A
 phishing page's natural next move is to tell the user to run a command it
@@ -100,5 +100,8 @@ def find_provider(providers: Sequence[ProviderEntry], slug: str) -> ProviderEntr
         if provider.slug == slug:
             return provider
     known = ", ".join(provider.slug for provider in providers)
-    msg = f"unknown provider {slug!r}; known providers are: {known}"
+    msg = (
+        f"unknown provider {slug!r}; known providers are: {known}. "
+        "A provider that is not one of those needs an [[allowlist]] entry in the config file."
+    )
     raise ProviderAllowlistError(msg)

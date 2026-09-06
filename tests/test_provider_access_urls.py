@@ -12,6 +12,7 @@ from simplefin_aggregator.provider_access_urls import (
     ACCESS_URLS_FILENAME,
     AccessUrlStoreError,
     access_urls_path,
+    check_can_save,
     load_access_urls,
     save_access_url,
 )
@@ -156,6 +157,27 @@ def test_save_removes_the_temporary_file_when_the_rename_fails(
     assert list(tmp_path.iterdir()) == []
 
 
+def test_check_can_save_creates_the_store_directory(tmp_path: Path) -> None:
+    path = access_urls_path(tmp_path / "nested" / "cache")
+
+    check_can_save(path)
+
+    assert path.parent.is_dir()
+    assert list(path.parent.iterdir()) == []
+
+
+@pytest.mark.skipif(
+    os.name == "posix" and os.geteuid() == 0,
+    reason="root writes a directory whatever its mode says",
+)
+def test_check_can_save_rejects_a_directory_it_cannot_write_in(tmp_path: Path) -> None:
+    read_only = tmp_path / "read-only"
+    read_only.mkdir(mode=0o500)
+
+    with pytest.raises(AccessUrlStoreError, match="cannot write"):
+        check_can_save(access_urls_path(read_only))
+
+
 def test_load_warns_on_permissive_file_mode(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -184,6 +206,14 @@ def test_malformed_json_is_a_clear_error(tmp_path: Path) -> None:
     _ = path.write_text("{not json")
 
     with pytest.raises(AccessUrlStoreError, match="malformed JSON"):
+        _ = load_access_urls(path)
+
+
+def test_a_file_that_is_not_utf8_is_a_clear_error(tmp_path: Path) -> None:
+    path = access_urls_path(tmp_path)
+    _ = path.write_bytes(b'{"access_urls": {"redbark": "\xff\xfe"}}')
+
+    with pytest.raises(AccessUrlStoreError, match="not UTF-8"):
         _ = load_access_urls(path)
 
 

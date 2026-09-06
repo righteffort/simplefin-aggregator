@@ -50,7 +50,7 @@ def _parse_root_or_value_error(raw: str) -> NormalizedUrl:
 
 
 class AllowlistEntry(BaseModel):
-    """A self-hosted provider this config adds to the built-in allowlist.
+    """A provider this config adds to the built-in allowlist.
 
     Editing this entry in the config file is deliberately the only way
     to add one -- see `provider_allowlist.py` for why there is no flag
@@ -170,10 +170,17 @@ def warn_if_permissive(path: Path) -> None:
 
 def load_config(path: Path) -> Config:
     try:
-        raw = path.read_text()
+        # utf-8, not the locale's: TOML is UTF-8 by definition. The -sig
+        # variant also drops a BOM, which an editor may have written.
+        raw = path.read_text(encoding="utf-8-sig")
     except OSError as exc:
         msg = f"cannot read config file {path}: {exc}"
         raise ConfigError(msg) from exc
+    except UnicodeDecodeError:
+        # Not the exception text: it quotes the byte it choked on, and this
+        # file holds credentials.
+        msg = f"config file {path} is not UTF-8 text"
+        raise ConfigError(msg) from None
 
     warn_if_permissive(path)
 

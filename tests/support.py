@@ -21,8 +21,8 @@ if TYPE_CHECKING:
         | Callable[[httpx2.Request], Coroutine[None, None, httpx2.Response]]
     )
 
-# The provider every test shares: a self-hosted allowlist entry, its slug used
-# as the configured provider_key, and an access URL under its root.
+# The provider every test shares: a config-supplied allowlist entry, its slug
+# used as the configured provider_key, and an access URL under its root.
 PROVIDER_KEY = "my-bank"
 PROVIDER_ROOT = "https://provider.example.com/simplefin"
 PROVIDER_ACCESS_URL = "https://user:pass@provider.example.com/simplefin"
