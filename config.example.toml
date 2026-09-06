@@ -1,8 +1,10 @@
 # simplefin-aggregator config.
 #
-# This file contains credentials (provider access URLs, client app
-# basic-auth password, claim token). It must be readable only by its
-# owner: chmod 600 config.toml
+# This file contains credentials (client app basic-auth password, claim
+# token). It must be readable only by its owner: chmod 600 config.toml
+#
+# Provider access URLs are NOT here -- `claim` stores them separately, under
+# the cache directory. See the README.
 
 # Change bind_host to 0.0.0.0 when running via Docker
 bind_host = "127.0.0.1"
@@ -23,19 +25,30 @@ claim_token = "replace-with-a-long-random-token"
 username = "actual-budget"
 password = "replace-with-a-strong-password"
 
+# The provider this aggregator proxies, named by its provider_key: the slug of
+# a built-in provider, or of an [[allowlist]] entry below. Exactly one
+# [[providers]] entry is allowed; a second is rejected.
+#
+# Built-in slugs:
+#   simplefin-bridge   SimpleFIN Bridge (beta)
+#   lunchflow          Lunch Flow
+#   redbark            Redbark
 [[providers]]
-name = "someprovider"
-# Obtained by running: simplefin-aggregator claim <setup-token>
-access_url = "https://user:pass@someprovider.example.com/simplefin"
+provider_key = "simplefin-bridge"
 
-# [[providers]]
-# name = "simplefin"
-# access_url = "https://user:pass@beta-bridge.simplefin.org/simplefin"
-
-# [[providers]]
-# name = "lunchflow"
-# access_url = "https://user:pass@www.lunchflow.app/api/simplefin-bridge"
-
-# [[providers]]
-# name = "redbark"
-# access_url = "https://user:pass@api.redbark.com/simplefin"
+# A provider the built-in list does not name -- a bridge you run yourself, or a
+# third party that is not built in -- has to be declared here before `claim`
+# will offer it or accept a token from it.
+#
+# `slug` must match [a-z0-9-]+ and must be unique. If you ever change
+# it, you must also change the corresponding entry for the provider in
+# the access URL store (see the README for details).
+#
+# `root` is matched as a prefix against both the claim URL inside the setup
+# token and the access URL the provider returns, so it must be the URL those
+# sit under. https, unless the host is a literal loopback IP address.
+#
+# [[allowlist]]
+# slug = "my-bridge"
+# label = "My Own Bridge"
+# root = "https://simplefin.example.com/simplefin"
