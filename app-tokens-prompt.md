@@ -346,14 +346,20 @@ its startup checks, `config.py` drops `claim_token` and `ClientAuth`, and
 `gen-token` goes. This one does not split further: the moment the config loses
 its credentials the old claim path cannot work.
 
-**D. Documentation.** `README.md` as a user guide — the `app` commands, the
-config file with no credentials in it, the Docker mount, the POSIX note, and
-the deletion of the repeatable-claim section, which is no longer a deviation.
-`config.example.toml`, `scripts/manual_verify.sh`, `TODO.md`, and
-`docs/ARCHITECTURE.md`: the new modules, the two-state record, the live-store
-versus snapshot-config distinction, the claim and `/accounts` flows, the
-locking, and the app token store as a third piece of on-disk state whose
-integrity matters more than its confidentiality.
+**D. Documentation.** 
+- `README.md` as a user guide — the `app` commands, the
+  config file with no credentials in it, the Docker mount, the POSIX note, and
+  the deletion of the repeatable-claim section, which is no longer a deviation.
+`config.example.toml`, `scripts/manual_verify.sh`
+- developer-facing documentation: `TODO.md`, and
+  `docs/ARCHITECTURE.md`: the new modules, the two-state record, the
+  live-store versus snapshot-config distinction, the claim and
+  `/accounts` flows, the locking, and the app token store as a third
+  piece of on-disk state whose integrity matters more than its
+  confidentiality.
+- agent-facing: `AGENTS.md` update to reflect any learnings/memories from the
+  session. If you make changes here, do not blindly append, synthesize
+  an improved file that stands on its own.
 
 ## Required tests
 

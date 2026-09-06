@@ -261,12 +261,15 @@ a store shaped around one answer would have to be rewritten for the other.
 > calendar time. Build the smaller half first: the store above does not depend
 > on the answer, and the synthesis is one function over it.
 >
-> The argument for per-institution is that five accounts at one bank are one
-> broken connection, and five near-identical strings are noise. The argument
-> for per-account is that it is what the observed behaviour may turn out to
-> be. Whichever lands, say in a comment that it was determined by observation,
-> not by reasoning, so a later reader does not re-derive it and get the other
-> answer.
+> The argument for per-institution is that five accounts at one bank
+> are one broken connection, and five near-identical strings are
+> noise. The argument for per-account is that it is what the observed
+> behaviour may turn out to be. Whichever lands, say in a comment that
+> it was determined by observation, not by reasoning, so a later
+> reader does not re-derive it and get the other answer. If you need
+> to proceed to the absence of the definitive answer, assume it is
+> per-account, leave behind a TODO for yourself to revisit at the
+> relevant point in the code.
 
 **When a provider has nothing remembered** — never yet reached, or a fresh
 install — synthesize one generic entry naming the provider and saying no
@@ -448,14 +451,19 @@ brings the probe's retry loop with it, and the explicit `retries=0` on the
 claim POST, which is a hardening of existing behaviour rather than part of the
 probe.
 
-**E. Documentation.** `README.md` (the two-provider example, prefixes and
-their permanence, the blank-prefix instruction and its hazard),
-`config.example.toml`, `scripts/manual_verify.sh`, `TODO.md`, and
-`docs/ARCHITECTURE.md`: the deleted and rewritten modules, the id-namespacing
-scheme, the routing and merging rules, the always-200 contract, `/info`
-answering locally, the `version` rejection, the last-seen accounts as a
-further piece of on-disk state with its own risk profile, and the retry
-asymmetry between the probe and everything else.
+**E. Documentation.** 
+- user-facing documentation: `README.md` (the two-provider example,
+  prefixes and their permanence, the blank-prefix instruction and its
+  hazard), `config.example.toml`, `scripts/manual_verify.sh`
+- developer-facing: `TODO.md`, and `docs/ARCHITECTURE.md`: the deleted
+  and rewritten modules, the id-namespacing scheme, the routing and
+  merging rules, the always-200 contract, `/info` answering locally,
+  the `version` rejection, the last-seen accounts as a further piece
+  of on-disk state with its own risk profile, and the retry asymmetry
+  between the probe and everything else.
+- agent-facing: `AGENTS.md` update to reflect any learnings/memories from the
+  session. If you make changes here, do not blindly append, synthesize
+  an improved file that stands on its own.
 
 ## Required tests
 
