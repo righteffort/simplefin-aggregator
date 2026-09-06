@@ -60,3 +60,15 @@ def test_build_provider_client_base_url_carries_no_credentials() -> None:
     client = build_provider_client(access_url)
 
     assert "s3cret-provider-password" not in str(client.base_url)
+
+
+def test_build_provider_client_does_not_follow_redirects() -> None:
+    access_url = validate_access_url(
+        parse_root("https://provider.example.com/simplefin"),
+        "https://user:pass@provider.example.com/simplefin",
+        provider="my-bank",
+    )
+
+    client = build_provider_client(access_url)
+
+    assert client.follow_redirects is False

@@ -21,7 +21,7 @@ SETUP_TOKEN = base64.b64encode(CLAIM_URL.encode("ascii")).decode("ascii")
 
 
 def _mock_client(handler: Callable[[httpx2.Request], httpx2.Response]) -> httpx2.Client:
-    return httpx2.Client(transport=httpx2.MockTransport(handler), follow_redirects=True)
+    return httpx2.Client(transport=httpx2.MockTransport(handler), follow_redirects=False)
 
 
 def test_claim_prints_access_url_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -98,4 +98,28 @@ def test_claim_with_invalid_base64_fails() -> None:
 
     assert result.exit_code == 1
     assert "base64" in result.stderr
+    assert result.stdout == ""
+
+
+def test_claim_client_does_not_follow_redirects() -> None:
+    # The other tests replace this factory, so only reaching into it checks the
+    # setting the CLI actually runs with.
+    with cli._build_claim_client() as claim_client:  # pyright: ignore[reportPrivateUsage]
+        assert claim_client.follow_redirects is False
+
+
+def test_claim_does_not_follow_a_redirect(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        calls.append(str(request.url))
+        return httpx2.Response(302, headers={"location": "https://attacker.example.net/claim"})
+
+    monkeypatch.setattr(cli, "_build_claim_client", lambda: _mock_client(handler))
+
+    result = runner.invoke(cli.app, ["claim", SETUP_TOKEN])
+
+    assert result.exit_code == 1
+    assert calls == [CLAIM_URL], "the setup token should not be replayed at the redirect target"
+    assert "302" in result.stderr
     assert result.stdout == ""

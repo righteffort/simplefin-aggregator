@@ -27,5 +27,5 @@ def build_provider_client(
         base_url=access_url.origin_and_path,
         auth=(access_url.username, access_url.password),
         timeout=timeout,
-        follow_redirects=True,
+        follow_redirects=False,
     )

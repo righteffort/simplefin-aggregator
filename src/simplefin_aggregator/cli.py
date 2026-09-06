@@ -28,7 +28,7 @@ app = typer.Typer(add_completion=False, no_args_is_help=True)
 
 def _build_claim_client() -> httpx2.Client:
     """Overridden in tests to inject an httpx2.MockTransport."""
-    return httpx2.Client(follow_redirects=True)
+    return httpx2.Client(follow_redirects=False)
 
 
 @app.command()

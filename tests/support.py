@@ -39,6 +39,7 @@ def install_provider_transport(app: FastAPI, provider_key: str, handler: MockHan
     state.provider_clients[provider_key] = httpx2.AsyncClient(
         transport=httpx2.MockTransport(handler),
         base_url=f"https://{provider_key}.example.com/simplefin",
+        follow_redirects=False,
     )
 
 

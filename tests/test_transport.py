@@ -6,8 +6,9 @@ from typing import TYPE_CHECKING
 import httpx2
 
 from simplefin_aggregator.config import Provider
+from simplefin_aggregator.provider_response import ProviderFailure
 from simplefin_aggregator.request_counter import RequestCounter
-from simplefin_aggregator.transport import fetch_all
+from simplefin_aggregator.transport import fetch, fetch_all
 
 
 if TYPE_CHECKING:
@@ -20,7 +21,9 @@ def _provider(provider_key: str) -> Provider:
 
 def _client_for(name: str, handler: MockHandler) -> httpx2.AsyncClient:
     return httpx2.AsyncClient(
-        transport=httpx2.MockTransport(handler), base_url=f"https://{name}.example.com/simplefin"
+        transport=httpx2.MockTransport(handler),
+        base_url=f"https://{name}.example.com/simplefin",
+        follow_redirects=False,
     )
 
 
@@ -106,3 +109,21 @@ async def test_fetch_all_one_provider_failing_still_yields_response_for_both() -
     assert responses[0].ok is True
     assert responses[1].provider_name == "bank-b"
     assert responses[1].ok is False
+
+
+async def test_fetch_reports_a_redirect_as_a_failure() -> None:
+    calls: list[str] = []
+
+    async def redirecting_handler(request: httpx2.Request) -> httpx2.Response:
+        calls.append(str(request.url))
+        return httpx2.Response(302, headers={"location": "https://attacker.example.net/accounts"})
+
+    client = _client_for("bank-a", redirecting_handler)
+
+    response = await fetch(client, "bank-a", "/accounts", [], RequestCounter())
+
+    assert response.ok is False
+    assert calls == ["https://bank-a.example.com/simplefin/accounts"], "no retry at the target"
+    assert isinstance(response, ProviderFailure)
+    assert "302" in response.error
+    assert "attacker.example.net" not in response.error

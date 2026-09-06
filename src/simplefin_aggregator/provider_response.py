@@ -28,7 +28,7 @@ class ProviderSuccess:
 
 @dataclass(frozen=True)
 class ProviderFailure:
-    """The provider was unreachable: connection refused, DNS failure, or timeout."""
+    """No usable response: the provider was unreachable, or answered with a redirect."""
 
     provider_name: str
     error: str

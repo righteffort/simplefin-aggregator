@@ -34,6 +34,11 @@ async def fetch(
         response = await client.get(path, params=httpx2.QueryParams(tuple(params)))
     except httpx2.HTTPError as exc:
         return ProviderFailure(provider_name=provider_name, error=str(exc))
+    if 300 <= response.status_code < 400:  # noqa: PLR2004
+        return ProviderFailure(
+            provider_name=provider_name,
+            error=f"provider returned an unexpected redirect (HTTP {response.status_code})",
+        )
     return ProviderSuccess(
         provider_name=provider_name,
         status=response.status_code,
