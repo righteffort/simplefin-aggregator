@@ -8,3 +8,6 @@ __pycache__/
 # Editors
 *~
 
+# Notes tracked in the orphan branch notes
+# To retrieve: git fetch origin notes && git worktree add .notes notes
+.notes
