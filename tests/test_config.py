@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from simplefin_aggregator.config import Config, ConfigError, load_config
-from simplefin_aggregator.provider_allowlist import KNOWN_PROVIDERS
+from simplefin_aggregator.provider_registry import KNOWN_PROVIDERS
 
 
 if TYPE_CHECKING:
@@ -24,16 +24,23 @@ username = "client-username"
 password = "s3cret-password"
 
 # Before [[providers]] so that a test can cut the providers off the end.
-[[allowlist]]
-slug = "my-bank"
+[[custom_providers]]
+key = "my-bank"
 label = "My Bank"
 root = "https://provider.example.com/simplefin"
 
 [[providers]]
-provider_key = "my-bank"
+key = "my-bank"
 """
 
 ROOT_LINE = 'root = "https://provider.example.com/simplefin"'
+KEY_LINE = 'key = "my-bank"'
+
+
+def _with_provider_key(key: str) -> str:
+    """VALID_TOML with only the [[providers]] key changed -- the last one in the file."""
+    head, _, tail = VALID_TOML.rpartition(KEY_LINE)
+    return f'{head}key = "{key}"{tail}'
 
 
 def _write(tmp_path: Path, contents: str) -> Path:
@@ -51,7 +58,7 @@ def test_load_config_tolerates_a_byte_order_mark(tmp_path: Path) -> None:
 
     config = load_config(path)
 
-    assert config.providers[0].provider_key == "my-bank"
+    assert config.providers[0].key == "my-bank"
 
 
 def test_load_config_parses_valid_file(tmp_path: Path) -> None:
@@ -63,7 +70,7 @@ def test_load_config_parses_valid_file(tmp_path: Path) -> None:
     assert config.bind_host == "127.0.0.2"
     assert config.bind_port == 9999  # noqa: PLR2004
     assert len(config.providers) == 1
-    assert config.providers[0].provider_key == "my-bank"
+    assert config.providers[0].key == "my-bank"
     assert config.client.username == "client-username"
 
 
@@ -195,7 +202,7 @@ def test_load_config_rejects_more_than_one_provider(tmp_path: Path) -> None:
         VALID_TOML
         + """
 [[providers]]
-provider_key = "redbark"
+key = "redbark"
 """
     )
     path = _write(tmp_path, two_providers)
@@ -240,52 +247,48 @@ def test_provider_entries_are_the_built_in_ones_plus_the_config_s(tmp_path: Path
 
     entries = config.provider_entries()
 
-    assert [entry.slug for entry in entries] == [
-        *(entry.slug for entry in KNOWN_PROVIDERS),
+    assert [entry.key for entry in entries] == [
+        *(entry.key for entry in KNOWN_PROVIDERS),
         "my-bank",
     ]
     assert entries[-1].root.origin_and_path == "https://provider.example.com/simplefin/"
 
 
 def test_load_config_accepts_a_provider_key_naming_a_built_in_provider(tmp_path: Path) -> None:
-    """A built-in provider needs no allowlist entry of its own."""
-    built_in_only = VALID_TOML.replace('provider_key = "my-bank"', 'provider_key = "redbark"')
+    """A built-in provider needs no custom provider entry of its own."""
+    built_in_only = _with_provider_key("redbark")
     config = load_config(_write(tmp_path, built_in_only))
 
-    assert config.providers[0].provider_key == "redbark"
+    assert config.providers[0].key == "redbark"
 
 
 def test_load_config_rejects_a_provider_key_no_entry_defines(tmp_path: Path) -> None:
-    dangling = VALID_TOML.replace('provider_key = "my-bank"', 'provider_key = "no-such-bank"')
+    dangling = _with_provider_key("no-such-bank")
     path = _write(tmp_path, dangling)
 
     with pytest.raises(ConfigError, match="unknown provider 'no-such-bank'"):
         _ = load_config(path)
 
 
-def test_load_config_rejects_an_allowlist_slug_that_shadows_a_built_in_provider(
+def test_load_config_rejects_a_custom_provider_key_that_shadows_a_built_in_provider(
     tmp_path: Path,
 ) -> None:
-    shadowing = VALID_TOML.replace('slug = "my-bank"', 'slug = "redbark"').replace(
-        'provider_key = "my-bank"', 'provider_key = "redbark"'
-    )
+    shadowing = VALID_TOML.replace(KEY_LINE, 'key = "redbark"')
     path = _write(tmp_path, shadowing)
 
-    with pytest.raises(ConfigError, match="duplicate provider slug 'redbark'"):
+    with pytest.raises(ConfigError, match="duplicate provider key 'redbark'"):
         _ = load_config(path)
 
 
-def test_load_config_rejects_a_malformed_allowlist_slug(tmp_path: Path) -> None:
-    bad_slug = VALID_TOML.replace('slug = "my-bank"', 'slug = "My Bank"').replace(
-        'provider_key = "my-bank"', 'provider_key = "My Bank"'
-    )
-    path = _write(tmp_path, bad_slug)
+def test_load_config_rejects_a_malformed_custom_provider_key(tmp_path: Path) -> None:
+    bad_key = VALID_TOML.replace(KEY_LINE, 'key = "My Bank"')
+    path = _write(tmp_path, bad_key)
 
     with pytest.raises(ConfigError, match="must match"):
         _ = load_config(path)
 
 
-ALLOWLIST_ROOT_CASES = [
+CUSTOM_PROVIDER_ROOT_CASES = [
     ("http://provider.example.com/simplefin", "must use https"),
     ("https://user:pass@provider.example.com/simplefin", "must not contain credentials"),
     ("https://provider.example.com:99999/simplefin", "not a valid URL"),
@@ -295,8 +298,10 @@ ALLOWLIST_ROOT_CASES = [
 ]
 
 
-@pytest.mark.parametrize(("root", "expected"), ALLOWLIST_ROOT_CASES)
-def test_load_config_rejects_a_bad_allowlist_root(tmp_path: Path, root: str, expected: str) -> None:
+@pytest.mark.parametrize(("root", "expected"), CUSTOM_PROVIDER_ROOT_CASES)
+def test_load_config_rejects_a_bad_custom_provider_root(
+    tmp_path: Path, root: str, expected: str
+) -> None:
     bad_root = VALID_TOML.replace(ROOT_LINE, f'root = "{root}"')
     path = _write(tmp_path, bad_root)
 
@@ -304,7 +309,7 @@ def test_load_config_rejects_a_bad_allowlist_root(tmp_path: Path, root: str, exp
         _ = load_config(path)
 
 
-def test_rejected_allowlist_root_error_does_not_quote_the_credentials(tmp_path: Path) -> None:
+def test_rejected_custom_provider_root_error_does_not_quote_the_credentials(tmp_path: Path) -> None:
     """A rejected root is named in the error, but never by quoting the raw input back."""
     root = "https://leak-username:leak-password@provider.example.com/simplefin"
     path = _write(tmp_path, VALID_TOML.replace(ROOT_LINE, f'root = "{root}"'))
@@ -316,10 +321,10 @@ def test_rejected_allowlist_root_error_does_not_quote_the_credentials(tmp_path: 
     assert "leak-username" not in message
     assert "leak-password" not in message
     # Named as a fault of the entry, so a config with several says which one.
-    assert "allowlist.0.root" in message
+    assert "custom_providers.0.root" in message
 
 
-def test_load_config_accepts_a_loopback_http_allowlist_root(tmp_path: Path) -> None:
+def test_load_config_accepts_a_loopback_http_custom_provider_root(tmp_path: Path) -> None:
     """The one non-https root allowed: a provider on the loopback interface."""
     loopback = VALID_TOML.replace(ROOT_LINE, 'root = "http://127.0.0.1:8081/simplefin"')
 

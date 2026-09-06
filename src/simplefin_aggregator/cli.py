@@ -13,12 +13,12 @@ import uvicorn
 
 from .access_log import install_access_log_redaction
 from .app import CLAIM_PATH_PREFIX, create_app
-from .config import Config, ConfigError, default_config_path, load_config
+from .config import Config, ConfigError, config_path, default_config_dir, load_config
 from .provider_access_urls import (
     AccessUrlStoreError,
-    access_urls_path,
     check_can_save,
     load_access_urls,
+    provider_creds_path,
     save_access_url,
 )
 from .setup_token import build_setup_token
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
     from fastapi import FastAPI
 
-    from .provider_allowlist import ProviderEntry
+    from .provider_registry import ProviderEntry
     from .url_validation import NormalizedUrl
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -41,20 +41,10 @@ def _build_claim_client() -> httpx2.Client:
     return httpx2.Client(follow_redirects=False)
 
 
-_ConfigOption = Annotated[
-    Path | None,
-    typer.Option("--config", help=f"Path to config.toml (default: {default_config_path()})."),
-]
-
-_CacheDirOption = Annotated[
+_ConfigDirOption = Annotated[
     Path | None,
     typer.Option(
-        "--cachedir",
-        help=(
-            "Directory holding the access URLs claimed from providers "
-            f"(default: {access_urls_path().parent}). Not disposable: its contents "
-            "cannot be regenerated without a fresh setup token from each provider."
-        ),
+        "--config-dir", help=f"Configuration directory (default: {default_config_dir()})."
     ),
 ]
 
@@ -66,13 +56,9 @@ def _fail(*lines: str) -> NoReturn:
     raise typer.Exit(code=1)
 
 
-def _resolve_config_path(config: Path | None) -> Path:
-    return config if config is not None else default_config_path()
-
-
-def _load_config_or_exit(config: Path | None) -> Config:
+def _load_config_or_exit(config_dir: Path | None) -> Config:
     try:
-        return load_config(_resolve_config_path(config))
+        return load_config(config_path(config_dir))
     except ConfigError as exc:
         _fail(f"error: {exc}")
 
@@ -129,19 +115,19 @@ def _claim_access_url(claim_url: NormalizedUrl, entry: ProviderEntry) -> str:
         except httpx2.HTTPError as exc:
             # httpx2's message describes the failure without naming the URL,
             # whose path is the still-unclaimed setup token.
-            _fail(f"error: could not reach provider {entry.slug!r}: {exc}")
+            _fail(f"error: could not reach provider {entry.key!r}: {exc}")
 
     if response.status_code == HTTPStatus.FORBIDDEN:
         already_claimed = (
             "A setup token is claimable once. If you did not just claim this one "
             "yourself, someone else has, and it should be revoked at the provider."
         )
-        _fail(f"error: provider {entry.slug!r} rejected the setup token (403).", already_claimed)
+        _fail(f"error: provider {entry.key!r} rejected the setup token (403).", already_claimed)
     if response.status_code != HTTPStatus.OK:
         # The status alone. A response body is attacker-influenced, and this
         # path now also catches the 3xx that redirects-disabled turns into a
         # failure rather than a hop.
-        _fail(f"error: claim failed: provider {entry.slug!r} answered {response.status_code}")
+        _fail(f"error: claim failed: provider {entry.key!r} answered {response.status_code}")
 
     # Stripped, since a provider that ends the body with a newline means the
     # URL and not a URL with a control character in it, which is what
@@ -152,12 +138,11 @@ def _claim_access_url(claim_url: NormalizedUrl, entry: ProviderEntry) -> str:
 @app.command()
 def claim(
     setup_token: Annotated[str | None, typer.Argument(help="Prompted for if omitted.")] = None,
-    config: _ConfigOption = None,
-    cachedir: _CacheDirOption = None,
+    config_dir: _ConfigDirOption = None,
 ) -> None:
     """Claim a one-time SimpleFIN setup token and store the access URL it returns."""
-    loaded_config = _load_config_or_exit(config)
-    store_path = access_urls_path(cachedir)
+    loaded_config = _load_config_or_exit(config_dir)
+    store_path = provider_creds_path(config_dir)
 
     # Before the token is spent, since a file problem found after the POST is a
     # lost credential: the token cannot be claimed a second time.
@@ -174,7 +159,7 @@ def claim(
         # Before the POST, not after: a host you contact has already learned
         # your egress IP and that the token is live, however you treat its
         # reply.
-        claim_url = validate_claim_url(entry.root, _decode_setup_token(token), provider=entry.slug)
+        claim_url = validate_claim_url(entry.root, _decode_setup_token(token), provider=entry.key)
     except UrlValidationError as exc:
         # Phrased as a checklist rather than a diagnosis, because every reason
         # validate_claim_url rejects a URL arrives as the same exception, and
@@ -183,63 +168,63 @@ def claim(
         what_to_check = (
             f"Nothing was claimed and the setup token is still unspent. Check that you "
             f"pasted the whole token and that it came from {entry.label}; a provider "
-            f"the menu does not list needs an [[allowlist]] entry in "
-            f"{_resolve_config_path(config)} before its tokens can be claimed."
+            f"the menu does not list needs a [[custom_providers]] entry in "
+            f"{config_path(config_dir)} before its tokens can be claimed."
         )
         _fail(f"error: {exc}", what_to_check)
 
     access_url = _claim_access_url(claim_url, entry)
 
     try:
-        _ = validate_access_url(entry.root, access_url, provider=entry.slug)
+        _ = validate_access_url(entry.root, access_url, provider=entry.key)
     except UrlValidationError as exc:
         _fail(f"error: {exc}")
 
     try:
-        save_access_url(store_path, entry.slug, access_url)
+        save_access_url(store_path, entry.key, access_url)
     except AccessUrlStoreError as exc:
         _fail(f"error: {exc}")
     except OSError as exc:
         _fail(f"error: cannot write access URL file {store_path}: {exc}")
 
-    typer.echo(f"Claimed {entry.label} as provider_key {entry.slug!r}.")
+    typer.echo(f"Claimed {entry.label} as key {entry.key!r}.")
     not_disposable = (
         f"note: its access URL is now in {store_path}, which is not disposable — "
         "replacing it needs a fresh setup token from the provider."
     )
     typer.echo(not_disposable, err=True)
 
-    if entry.slug not in {provider.provider_key for provider in loaded_config.providers}:
-        # serve reads the store by the provider_key its config names, so a
+    if entry.key not in {provider.key for provider in loaded_config.providers}:
+        # serve reads the store by the key its config names, so a
         # claim the config does not reference would otherwise look like a
         # success and then fail at startup with "claim one first".
         unreferenced = (
-            f"warning: no [[providers]] entry in {_resolve_config_path(config)} names "
-            f"provider_key {entry.slug!r}, so serve will not use this access URL."
+            f"warning: no [[providers]] entry in {config_path(config_dir)} names "
+            f"key {entry.key!r}, so serve will not use this access URL."
         )
         typer.echo(unreferenced, err=True)
 
 
 @app.command("gen-token")
-def gen_token(config: _ConfigOption = None) -> None:
+def gen_token(config_dir: _ConfigDirOption = None) -> None:
     """Print a setup token a client app can use to claim this aggregator."""
-    loaded_config = _load_config_or_exit(config)
+    loaded_config = _load_config_or_exit(config_dir)
     typer.echo(build_setup_token(loaded_config))
 
 
-def _build_app_or_exit(loaded_config: Config, cachedir: Path | None) -> FastAPI:
+def _build_app_or_exit(loaded_config: Config, config_dir: Path | None) -> FastAPI:
     try:
-        access_urls = load_access_urls(access_urls_path(cachedir))
+        access_urls = load_access_urls(provider_creds_path(config_dir))
         return create_app(loaded_config, access_urls)
     except (AccessUrlStoreError, UrlValidationError) as exc:
         _fail(f"error: {exc}")
 
 
 @app.command()
-def serve(config: _ConfigOption = None, cachedir: _CacheDirOption = None) -> None:
+def serve(config_dir: _ConfigDirOption = None) -> None:
     """Read the config and run the server. Never claims anything."""
-    loaded_config = _load_config_or_exit(config)
-    fastapi_app = _build_app_or_exit(loaded_config, cachedir)
+    loaded_config = _load_config_or_exit(config_dir)
+    fastapi_app = _build_app_or_exit(loaded_config, config_dir)
 
     install_access_log_redaction(
         logger_name="uvicorn.access",

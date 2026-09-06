@@ -9,11 +9,11 @@ from pathlib import Path
 import pytest
 
 from simplefin_aggregator.provider_access_urls import (
-    ACCESS_URLS_FILENAME,
+    PROVIDER_CREDS_FILENAME,
     AccessUrlStoreError,
-    access_urls_path,
     check_can_save,
     load_access_urls,
+    provider_creds_path,
     save_access_url,
 )
 
@@ -26,23 +26,23 @@ OTHER_ACCESS_URL = "https://other:other-password@other.invalid/simplefin"
 SHORT_ACCESS_URL = "https://u:s3cret-short@h.invalid/x"
 
 
-def test_access_urls_path_uses_the_given_cache_dir(tmp_path: Path) -> None:
-    assert access_urls_path(tmp_path) == tmp_path / ACCESS_URLS_FILENAME
+def test_provider_creds_path_uses_the_given_config_dir(tmp_path: Path) -> None:
+    assert provider_creds_path(tmp_path) == tmp_path / PROVIDER_CREDS_FILENAME
 
 
-def test_access_urls_path_defaults_to_the_platform_cache_dir() -> None:
-    path = access_urls_path()
+def test_provider_creds_path_defaults_to_the_platform_config_dir() -> None:
+    path = provider_creds_path()
 
-    assert path.name == ACCESS_URLS_FILENAME
+    assert path.name == PROVIDER_CREDS_FILENAME
     assert "simplefin-aggregator" in str(path)
 
 
 def test_missing_file_loads_as_empty(tmp_path: Path) -> None:
-    assert load_access_urls(access_urls_path(tmp_path)) == {}
+    assert load_access_urls(provider_creds_path(tmp_path)) == {}
 
 
 def test_round_trip(tmp_path: Path) -> None:
-    path = access_urls_path(tmp_path)
+    path = provider_creds_path(tmp_path)
 
     save_access_url(path, "redbark", ACCESS_URL)
 
@@ -51,7 +51,7 @@ def test_round_trip(tmp_path: Path) -> None:
 
 
 def test_save_creates_missing_directories(tmp_path: Path) -> None:
-    path = access_urls_path(tmp_path / "nested" / "cache")
+    path = provider_creds_path(tmp_path / "nested" / "config")
 
     save_access_url(path, "redbark", ACCESS_URL)
 
@@ -59,7 +59,7 @@ def test_save_creates_missing_directories(tmp_path: Path) -> None:
 
 
 def test_save_keeps_other_providers(tmp_path: Path) -> None:
-    path = access_urls_path(tmp_path)
+    path = provider_creds_path(tmp_path)
 
     save_access_url(path, "redbark", ACCESS_URL)
     save_access_url(path, "lunchflow", OTHER_ACCESS_URL)
@@ -70,7 +70,7 @@ def test_save_keeps_other_providers(tmp_path: Path) -> None:
 
 
 def test_save_replaces_the_entry_for_one_provider(tmp_path: Path) -> None:
-    path = access_urls_path(tmp_path)
+    path = provider_creds_path(tmp_path)
 
     save_access_url(path, "redbark", ACCESS_URL)
     save_access_url(path, "redbark", OTHER_ACCESS_URL)
@@ -79,7 +79,7 @@ def test_save_replaces_the_entry_for_one_provider(tmp_path: Path) -> None:
 
 
 def test_file_is_created_owner_read_write_only(tmp_path: Path) -> None:
-    path = access_urls_path(tmp_path)
+    path = provider_creds_path(tmp_path)
 
     save_access_url(path, "redbark", ACCESS_URL)
 
@@ -87,7 +87,7 @@ def test_file_is_created_owner_read_write_only(tmp_path: Path) -> None:
 
 
 def test_save_tightens_the_mode_of_an_existing_permissive_file(tmp_path: Path) -> None:
-    path = access_urls_path(tmp_path)
+    path = provider_creds_path(tmp_path)
     save_access_url(path, "redbark", ACCESS_URL)
     path.chmod(0o644)
 
@@ -97,19 +97,19 @@ def test_save_tightens_the_mode_of_an_existing_permissive_file(tmp_path: Path) -
 
 
 def test_no_temporary_file_is_left_behind(tmp_path: Path) -> None:
-    path = access_urls_path(tmp_path)
+    path = provider_creds_path(tmp_path)
 
     save_access_url(path, "redbark", ACCESS_URL)
 
-    assert [child.name for child in tmp_path.iterdir()] == [ACCESS_URLS_FILENAME]
+    assert [child.name for child in tmp_path.iterdir()] == [PROVIDER_CREDS_FILENAME]
 
 
 def test_save_does_not_follow_a_symlink_at_a_guessable_temporary_path(tmp_path: Path) -> None:
-    """`--cachedir` may be a directory another local user can write."""
+    """The config directory may be one another local user can write."""
     decoy = tmp_path / "decoy"
     _ = decoy.write_text("")
-    (tmp_path / f"{ACCESS_URLS_FILENAME}.tmp").symlink_to(decoy)
-    path = access_urls_path(tmp_path)
+    (tmp_path / f"{PROVIDER_CREDS_FILENAME}.tmp").symlink_to(decoy)
+    path = provider_creds_path(tmp_path)
 
     save_access_url(path, "redbark", ACCESS_URL)
 
@@ -119,7 +119,7 @@ def test_save_does_not_follow_a_symlink_at_a_guessable_temporary_path(tmp_path: 
 
 def test_save_fsyncs_before_renaming(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A rename that reaches disk before the data blocks yields an empty store."""
-    path = access_urls_path(tmp_path)
+    path = provider_creds_path(tmp_path)
     events: list[str] = []
     real_fsync = os.fsync
     real_replace = Path.replace
@@ -144,7 +144,7 @@ def test_save_removes_the_temporary_file_when_the_rename_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Cleanup must survive a non-OSError failure, which `except OSError` missed."""
-    path = access_urls_path(tmp_path)
+    path = provider_creds_path(tmp_path)
 
     def exploding_replace(_self: Path, _target: str | Path) -> Path:
         raise KeyboardInterrupt
@@ -158,7 +158,7 @@ def test_save_removes_the_temporary_file_when_the_rename_fails(
 
 
 def test_check_can_save_creates_the_store_directory(tmp_path: Path) -> None:
-    path = access_urls_path(tmp_path / "nested" / "cache")
+    path = provider_creds_path(tmp_path / "nested" / "config")
 
     check_can_save(path)
 
@@ -175,13 +175,13 @@ def test_check_can_save_rejects_a_directory_it_cannot_write_in(tmp_path: Path) -
     read_only.mkdir(mode=0o500)
 
     with pytest.raises(AccessUrlStoreError, match="cannot write"):
-        check_can_save(access_urls_path(read_only))
+        check_can_save(provider_creds_path(read_only))
 
 
 def test_load_warns_on_permissive_file_mode(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    path = access_urls_path(tmp_path)
+    path = provider_creds_path(tmp_path)
     save_access_url(path, "redbark", ACCESS_URL)
     path.chmod(0o644)
 
@@ -193,7 +193,7 @@ def test_load_warns_on_permissive_file_mode(
 def test_load_does_not_warn_on_owner_only_file_mode(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    path = access_urls_path(tmp_path)
+    path = provider_creds_path(tmp_path)
     save_access_url(path, "redbark", ACCESS_URL)
 
     _ = load_access_urls(path)
@@ -202,7 +202,7 @@ def test_load_does_not_warn_on_owner_only_file_mode(
 
 
 def test_malformed_json_is_a_clear_error(tmp_path: Path) -> None:
-    path = access_urls_path(tmp_path)
+    path = provider_creds_path(tmp_path)
     _ = path.write_text("{not json")
 
     with pytest.raises(AccessUrlStoreError, match="malformed JSON"):
@@ -210,7 +210,7 @@ def test_malformed_json_is_a_clear_error(tmp_path: Path) -> None:
 
 
 def test_a_file_that_is_not_utf8_is_a_clear_error(tmp_path: Path) -> None:
-    path = access_urls_path(tmp_path)
+    path = provider_creds_path(tmp_path)
     _ = path.write_bytes(b'{"access_urls": {"redbark": "\xff\xfe"}}')
 
     with pytest.raises(AccessUrlStoreError, match="not UTF-8"):
@@ -218,7 +218,7 @@ def test_a_file_that_is_not_utf8_is_a_clear_error(tmp_path: Path) -> None:
 
 
 def test_wrong_shape_is_a_clear_error_without_the_access_url(tmp_path: Path) -> None:
-    path = access_urls_path(tmp_path)
+    path = provider_creds_path(tmp_path)
     # A value in the wrong shape, so the error has to name the problem without
     # quoting back the input it rejected -- credentials and all.
     _ = path.write_text(f'{{"access_urls": {{"redbark": ["{SHORT_ACCESS_URL}"]}}}}')
@@ -232,7 +232,7 @@ def test_wrong_shape_is_a_clear_error_without_the_access_url(tmp_path: Path) -> 
 
 
 def test_stored_access_url_is_redacted_in_repr(tmp_path: Path) -> None:
-    path = access_urls_path(tmp_path)
+    path = provider_creds_path(tmp_path)
     save_access_url(path, "redbark", ACCESS_URL)
 
     assert "s3cret-provider-password" not in repr(load_access_urls(path))
@@ -240,7 +240,7 @@ def test_stored_access_url_is_redacted_in_repr(tmp_path: Path) -> None:
 
 def test_stored_file_holds_the_real_access_url(tmp_path: Path) -> None:
     """The written file must hold the usable URL, not SecretStr's asterisks."""
-    path = access_urls_path(tmp_path)
+    path = provider_creds_path(tmp_path)
 
     save_access_url(path, "redbark", ACCESS_URL)
 

@@ -27,8 +27,8 @@ if TYPE_CHECKING:
     from .url_validation import NormalizedUrl
 
 
-class ProviderAllowlistError(ValueError):
-    """A provider allowlist has a malformed or duplicate slug, or names a provider that is absent.
+class ProviderRegistryError(ValueError):
+    """The provider registry has a malformed or duplicate key, or names a provider that is absent.
 
     Subclasses `ValueError` so that raising it inside a pydantic validator is
     reported as an ordinary config validation error rather than escaping as a
@@ -36,7 +36,7 @@ class ProviderAllowlistError(ValueError):
     """
 
 
-_SLUG_PATTERN = re.compile(r"[a-z0-9-]+")
+_KEY_PATTERN = re.compile(r"[a-z0-9-]+")
 
 
 @dataclass(frozen=True)
@@ -45,8 +45,8 @@ class ProviderEntry:
 
     # Stable machine identifier: the access-URL store's key and what config
     # files reference. Changing one invalidates stored access URLs and config
-    # references, so treat published slugs as permanent.
-    slug: str
+    # references, so treat published keys as permanent.
+    key: str
     label: str
     root: NormalizedUrl
 
@@ -54,24 +54,24 @@ class ProviderEntry:
         # Every entry is built through here, config-supplied ones included, so
         # this is the one place the store's keys and the claim menu's
         # selectors are constrained.
-        if not _SLUG_PATTERN.fullmatch(self.slug):
-            msg = f"provider slug {self.slug!a} must match {_SLUG_PATTERN.pattern}"
-            raise ProviderAllowlistError(msg)
+        if not _KEY_PATTERN.fullmatch(self.key):
+            msg = f"provider key {self.key!a} must match {_KEY_PATTERN.pattern}"
+            raise ProviderRegistryError(msg)
 
 
 KNOWN_PROVIDERS: tuple[ProviderEntry, ...] = (
     ProviderEntry(
-        slug="simplefin-bridge",
+        key="simplefin-bridge",
         label="SimpleFIN Bridge (beta)",
         root=parse_root("https://beta-bridge.simplefin.org/simplefin"),
     ),
     ProviderEntry(
-        slug="lunchflow",
+        key="lunchflow",
         label="Lunch Flow",
         root=parse_root("https://www.lunchflow.app/api/simplefin-bridge"),
     ),
     ProviderEntry(
-        slug="redbark", label="Redbark", root=parse_root("https://api.redbark.com/simplefin")
+        key="redbark", label="Redbark", root=parse_root("https://api.redbark.com/simplefin")
     ),
 )
 
@@ -79,7 +79,7 @@ KNOWN_PROVIDERS: tuple[ProviderEntry, ...] = (
 def merged_providers(extra: Iterable[ProviderEntry]) -> tuple[ProviderEntry, ...]:
     """`KNOWN_PROVIDERS` followed by the config-supplied entries.
 
-    A slug that collides -- with a built-in entry or with another config entry
+    A key that collides -- with a built-in entry or with another config entry
     -- is an error rather than an override: silently shadowing a built-in root
     with a config one would turn a typo into a downgrade of exactly the check
     this module exists to perform.
@@ -87,21 +87,21 @@ def merged_providers(extra: Iterable[ProviderEntry]) -> tuple[ProviderEntry, ...
     providers = (*KNOWN_PROVIDERS, *extra)
     seen: set[str] = set()
     for provider in providers:
-        if provider.slug in seen:
-            msg = f"duplicate provider slug {provider.slug!r}"
-            raise ProviderAllowlistError(msg)
-        seen.add(provider.slug)
+        if provider.key in seen:
+            msg = f"duplicate provider key {provider.key!r}"
+            raise ProviderRegistryError(msg)
+        seen.add(provider.key)
     return providers
 
 
-def find_provider(providers: Sequence[ProviderEntry], slug: str) -> ProviderEntry:
-    """Return the entry with this slug. An unknown slug is an error, never guessed at."""
+def find_provider(providers: Sequence[ProviderEntry], key: str) -> ProviderEntry:
+    """Return the entry with this key. An unknown key is an error, never guessed at."""
     for provider in providers:
-        if provider.slug == slug:
+        if provider.key == key:
             return provider
-    known = ", ".join(provider.slug for provider in providers)
+    known = ", ".join(provider.key for provider in providers)
     msg = (
-        f"unknown provider {slug!r}; known providers are: {known}. "
-        "A provider that is not one of those needs an [[allowlist]] entry in the config file."
+        f"unknown provider {key!r}; known providers are: {known}. "
+        "A provider that is not one of those needs a [[custom_providers]] entry in the config file."
     )
-    raise ProviderAllowlistError(msg)
+    raise ProviderRegistryError(msg)

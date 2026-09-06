@@ -29,13 +29,13 @@ claim_token = "my-secret-token"
 username = "client-username"
 password = "s3cret-password"
 
-[[allowlist]]
-slug = "my-bank"
+[[custom_providers]]
+key = "my-bank"
 label = "My Bank"
 root = "https://provider.example.com/simplefin"
 
 [[providers]]
-provider_key = "my-bank"
+key = "my-bank"
 """
 
 
@@ -47,9 +47,9 @@ def _write_config(tmp_path: Path, contents: str) -> Path:
 
 
 def test_gen_token_prints_a_setup_token_that_decodes_to_the_claim_url(tmp_path: Path) -> None:
-    config_path = _write_config(tmp_path, VALID_TOML)
+    _ = _write_config(tmp_path, VALID_TOML)
 
-    result = runner.invoke(cli.app, ["gen-token", "--config", str(config_path)])
+    result = runner.invoke(cli.app, ["gen-token", "--config-dir", str(tmp_path)])
 
     assert result.exit_code == 0
     decoded = base64.b64decode(result.stdout.strip(), validate=True).decode("ascii")
@@ -57,10 +57,9 @@ def test_gen_token_prints_a_setup_token_that_decodes_to_the_claim_url(tmp_path: 
 
 
 def test_gen_token_output_actually_claims_successfully_against_the_real_app(tmp_path: Path) -> None:
-    config_path = _write_config(tmp_path, VALID_TOML)
-    config = load_config(config_path)
+    config = load_config(_write_config(tmp_path, VALID_TOML))
 
-    result = runner.invoke(cli.app, ["gen-token", "--config", str(config_path)])
+    result = runner.invoke(cli.app, ["gen-token", "--config-dir", str(tmp_path)])
     claim_url = base64.b64decode(result.stdout.strip(), validate=True).decode("ascii")
     claim_path = claim_url.removeprefix(config.base_url)
 
@@ -72,9 +71,9 @@ def test_gen_token_output_actually_claims_successfully_against_the_real_app(tmp_
 
 
 def test_gen_token_fails_on_invalid_config(tmp_path: Path) -> None:
-    config_path = _write_config(tmp_path, "this is not [valid toml")
+    _ = _write_config(tmp_path, "this is not [valid toml")
 
-    result = runner.invoke(cli.app, ["gen-token", "--config", str(config_path)])
+    result = runner.invoke(cli.app, ["gen-token", "--config-dir", str(tmp_path)])
 
     assert result.exit_code == 1
     assert "error" in result.stderr

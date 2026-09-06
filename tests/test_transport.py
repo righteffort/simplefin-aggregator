@@ -15,8 +15,8 @@ if TYPE_CHECKING:
     from .support import MockHandler
 
 
-def _provider(provider_key: str) -> Provider:
-    return Provider.model_validate({"provider_key": provider_key})
+def _provider(key: str) -> Provider:
+    return Provider.model_validate({"key": key})
 
 
 def _client_for(name: str, handler: MockHandler) -> httpx2.AsyncClient:
@@ -58,8 +58,8 @@ async def test_fetch_all_calls_every_provider() -> None:
     calls: list[str] = []
     tracker = _ConcurrencyTracker()
     clients = {
-        provider_a.provider_key: _client_for("bank-a", _slow_ok_handler(calls, tracker)),
-        provider_b.provider_key: _client_for("bank-b", _slow_ok_handler(calls, tracker)),
+        provider_a.key: _client_for("bank-a", _slow_ok_handler(calls, tracker)),
+        provider_b.key: _client_for("bank-b", _slow_ok_handler(calls, tracker)),
     }
 
     responses = await fetch_all(
@@ -76,8 +76,8 @@ async def test_fetch_all_requests_overlap_in_time() -> None:
     calls: list[str] = []
     tracker = _ConcurrencyTracker()
     clients = {
-        provider_a.provider_key: _client_for("bank-a", _slow_ok_handler(calls, tracker)),
-        provider_b.provider_key: _client_for("bank-b", _slow_ok_handler(calls, tracker)),
+        provider_a.key: _client_for("bank-a", _slow_ok_handler(calls, tracker)),
+        provider_b.key: _client_for("bank-b", _slow_ok_handler(calls, tracker)),
     }
 
     _ = await fetch_all(clients, [provider_a, provider_b], "/accounts", [], RequestCounter())
@@ -96,8 +96,8 @@ async def test_fetch_all_one_provider_failing_still_yields_response_for_both() -
         raise httpx2.ConnectError(msg, request=request)
 
     clients = {
-        provider_a.provider_key: _client_for("bank-a", ok_handler),
-        provider_b.provider_key: _client_for("bank-b", failing_handler),
+        provider_a.key: _client_for("bank-a", ok_handler),
+        provider_b.key: _client_for("bank-b", failing_handler),
     }
 
     responses = await fetch_all(

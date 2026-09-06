@@ -9,8 +9,8 @@ import pytest
 from typer.testing import CliRunner
 
 from simplefin_aggregator import cli
-from simplefin_aggregator.provider_access_urls import access_urls_path, load_access_urls
-from simplefin_aggregator.provider_allowlist import KNOWN_PROVIDERS
+from simplefin_aggregator.provider_access_urls import load_access_urls, provider_creds_path
+from simplefin_aggregator.provider_registry import KNOWN_PROVIDERS
 
 
 if TYPE_CHECKING:
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 runner = CliRunner()
 
-PROVIDER_SLUG = "my-bank"
+PROVIDER_KEY = "my-bank"
 PROVIDER_LABEL = "My Bank"
 PROVIDER_ROOT = "https://provider.example.com/simplefin"
 CLAIM_URL = f"{PROVIDER_ROOT}/claim/some-setup-token"
@@ -31,7 +31,7 @@ PROVIDER_PASSWORD = "s3cret-provider-password"
 # below testing for a string no URL in this file contains.
 ACCESS_URL = f"https://user:{PROVIDER_PASSWORD}@provider.example.com/simplefin"
 
-# The config's own allowlist entry is offered after the built-in ones.
+# The config's own custom provider entry is offered after the built-in ones.
 MENU_CHOICE = str(len(KNOWN_PROVIDERS) + 1)
 
 CONFIG_TOML = f"""
@@ -42,13 +42,13 @@ claim_token = "claim-token"
 username = "client-username"
 password = "s3cret-client-password"
 
-[[allowlist]]
-slug = "{PROVIDER_SLUG}"
+[[custom_providers]]
+key = "{PROVIDER_KEY}"
 label = "{PROVIDER_LABEL}"
 root = "{PROVIDER_ROOT}"
 
 [[providers]]
-provider_key = "{PROVIDER_SLUG}"
+key = "{PROVIDER_KEY}"
 """
 
 
@@ -90,18 +90,16 @@ def _responds(
 def _run_claim(
     tmp_path: Path, *args: str, config: str = CONFIG_TOML, choice: str = MENU_CHOICE
 ) -> Result:
-    config_path = _write_config(tmp_path, config)
+    _ = _write_config(tmp_path, config)
     return runner.invoke(
-        cli.app,
-        ["claim", *args, "--config", str(config_path), "--cachedir", str(tmp_path)],
-        input=f"{choice}\n",
+        cli.app, ["claim", *args, "--config-dir", str(tmp_path)], input=f"{choice}\n"
     )
 
 
 def _stored(tmp_path: Path) -> dict[str, str]:
     return {
-        slug: secret.get_secret_value()
-        for slug, secret in load_access_urls(access_urls_path(tmp_path)).items()
+        key: secret.get_secret_value()
+        for key, secret in load_access_urls(provider_creds_path(tmp_path)).items()
     }
 
 
@@ -110,14 +108,14 @@ def claim_succeeds(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return _install_provider(monkeypatch, _responds(200, ACCESS_URL))
 
 
-def test_claim_stores_the_access_url_under_the_selected_providers_slug(
+def test_claim_stores_the_access_url_under_the_selected_providers_key(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
     result = _run_claim(tmp_path, SETUP_TOKEN)
 
     assert result.exit_code == 0
     assert claim_succeeds == [CLAIM_URL]
-    assert _stored(tmp_path) == {PROVIDER_SLUG: ACCESS_URL}
+    assert _stored(tmp_path) == {PROVIDER_KEY: ACCESS_URL}
 
 
 @pytest.mark.usefixtures("claim_succeeds")
@@ -126,7 +124,7 @@ def test_claim_does_not_print_the_access_url_it_stored(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert PROVIDER_PASSWORD not in result.output
-    assert PROVIDER_SLUG in result.stdout
+    assert PROVIDER_KEY in result.stdout
     assert "warning" not in result.stderr
 
 
@@ -143,30 +141,28 @@ def test_claim_offers_the_built_in_providers_alongside_the_configured_one(tmp_pa
 def test_claim_prompts_for_the_token_when_it_is_not_given_as_an_argument(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
-    config_path = _write_config(tmp_path)
+    _ = _write_config(tmp_path)
 
     result = runner.invoke(
-        cli.app,
-        ["claim", "--config", str(config_path), "--cachedir", str(tmp_path)],
-        input=f"{MENU_CHOICE}\n{SETUP_TOKEN}\n",
+        cli.app, ["claim", "--config-dir", str(tmp_path)], input=f"{MENU_CHOICE}\n{SETUP_TOKEN}\n"
     )
 
     assert result.exit_code == 0
     assert claim_succeeds == [CLAIM_URL]
-    assert _stored(tmp_path) == {PROVIDER_SLUG: ACCESS_URL}
+    assert _stored(tmp_path) == {PROVIDER_KEY: ACCESS_URL}
 
 
 @pytest.mark.usefixtures("claim_succeeds")
 def test_claim_leaves_other_providers_in_the_store_alone(tmp_path: Path) -> None:
     other = "https://user:other-password@beta-bridge.simplefin.org/simplefin"
-    _ = access_urls_path(tmp_path).write_text(
+    _ = provider_creds_path(tmp_path).write_text(
         f'{{"access_urls": {{"simplefin-bridge": "{other}"}}}}'
     )
 
     result = _run_claim(tmp_path, SETUP_TOKEN)
 
     assert result.exit_code == 0
-    assert _stored(tmp_path) == {"simplefin-bridge": other, PROVIDER_SLUG: ACCESS_URL}
+    assert _stored(tmp_path) == {"simplefin-bridge": other, PROVIDER_KEY: ACCESS_URL}
 
 
 def test_claim_fails_on_an_invalid_config_without_reaching_the_provider(
@@ -183,7 +179,7 @@ def test_claim_fails_on_an_unreadable_store_before_spending_the_token(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
     """A store that cannot be read must fail while the token is still claimable."""
-    _ = access_urls_path(tmp_path).write_text("{not json")
+    _ = provider_creds_path(tmp_path).write_text("{not json")
 
     result = _run_claim(tmp_path, SETUP_TOKEN)
 
@@ -196,20 +192,19 @@ def test_claim_fails_on_an_unreadable_store_before_spending_the_token(
     os.name == "posix" and os.geteuid() == 0,
     reason="root writes a directory whatever its mode says",
 )
-def test_claim_fails_on_an_unwritable_cache_directory_before_spending_the_token(
+def test_claim_fails_on_an_unwritable_config_directory_before_spending_the_token(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
     """The store is written only after the POST, so its directory is checked before it."""
-    config_path = _write_config(tmp_path)
-    # Readable, so the store loads as empty and it is the writability check
-    # that has to catch this.
-    cachedir = tmp_path / "read-only"
-    cachedir.mkdir(mode=0o500)
+    config_dir = tmp_path / "read-only"
+    config_dir.mkdir(mode=0o700)
+    _ = _write_config(config_dir)
+    # Still readable, so the config loads and the store reads as empty; it is
+    # the writability check that has to catch this.
+    config_dir.chmod(0o500)
 
     result = runner.invoke(
-        cli.app,
-        ["claim", SETUP_TOKEN, "--config", str(config_path), "--cachedir", str(cachedir)],
-        input=f"{MENU_CHOICE}\n",
+        cli.app, ["claim", SETUP_TOKEN, "--config-dir", str(config_dir)], input=f"{MENU_CHOICE}\n"
     )
 
     assert result.exit_code == 1
@@ -218,18 +213,19 @@ def test_claim_fails_on_an_unwritable_cache_directory_before_spending_the_token(
 
 
 @pytest.mark.usefixtures("claim_succeeds")
-def test_claim_warns_when_no_providers_entry_names_the_claimed_slug(tmp_path: Path) -> None:
-    """serve looks the store up by the provider_key its config names, not by what was claimed."""
-    config = CONFIG_TOML.replace(
-        f'provider_key = "{PROVIDER_SLUG}"', 'provider_key = "simplefin-bridge"'
-    )
+def test_claim_warns_when_no_providers_entry_names_the_claimed_key(tmp_path: Path) -> None:
+    """serve looks the store up by the key its config names, not by what was claimed."""
+    # Only the [[providers]] key -- the last one in the file -- so the custom
+    # provider stays claimable while nothing in config refers to it.
+    head, _, tail = CONFIG_TOML.rpartition(f'key = "{PROVIDER_KEY}"')
+    config = f'{head}key = "simplefin-bridge"{tail}'
 
     result = _run_claim(tmp_path, SETUP_TOKEN, config=config)
 
     assert result.exit_code == 0
-    assert _stored(tmp_path) == {PROVIDER_SLUG: ACCESS_URL}
+    assert _stored(tmp_path) == {PROVIDER_KEY: ACCESS_URL}
     assert f"no [[providers]] entry in {tmp_path / 'config.toml'} names" in result.stderr
-    assert PROVIDER_SLUG in result.stderr
+    assert PROVIDER_KEY in result.stderr
 
 
 def test_claim_rejects_a_menu_choice_outside_the_offered_range(
@@ -306,7 +302,7 @@ def test_claim_rejects_a_claim_url_outside_the_selected_root_before_any_request(
     assert "https://provider.example.com.evil.test is not valid" in result.stderr
     assert "some-setup-token" not in result.output, "the token is still unclaimed"
     assert "still unspent" in result.stderr
-    assert "[[allowlist]]" in result.stderr
+    assert "[[custom_providers]]" in result.stderr
     assert str(tmp_path / "config.toml") in result.stderr
 
 
@@ -386,7 +382,7 @@ def test_claim_tolerates_a_provider_that_ends_the_access_url_with_a_newline(
     result = _run_claim(tmp_path, SETUP_TOKEN)
 
     assert result.exit_code == 0
-    assert _stored(tmp_path) == {PROVIDER_SLUG: ACCESS_URL}
+    assert _stored(tmp_path) == {PROVIDER_KEY: ACCESS_URL}
 
 
 def test_claim_client_does_not_follow_redirects() -> None:

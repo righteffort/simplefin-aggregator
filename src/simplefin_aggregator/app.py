@@ -15,8 +15,8 @@ from .auth import require_client_auth
 from .id_rewriting import rewrite_ids, unrewrite_ids
 from .merge import merge
 from .provider_access_urls import AccessUrlStoreError
-from .provider_allowlist import find_provider
 from .provider_clients import build_provider_client
+from .provider_registry import find_provider
 from .provider_resolution import resolve_provider_for_account
 from .request_counter import RequestCounter
 from .transport import fetch_all
@@ -55,19 +55,19 @@ def _get_app_state(request: Request) -> _AppState:
 
 
 def _resolve_access_url(
-    config: Config, access_urls: Mapping[str, SecretStr], provider_key: str
+    config: Config, access_urls: Mapping[str, SecretStr], key: str
 ) -> NormalizedUrl:
-    """Validate one stored access URL against that provider's current allowlist root.
+    """Validate one stored access URL against that provider's current root.
 
     A single-entry comparison, not a scan: the URL was claimed from one
     specific provider, so it is that provider's root it has to still match.
     """
-    entry = find_provider(config.provider_entries(), provider_key)
-    stored = access_urls.get(provider_key)
+    entry = find_provider(config.provider_entries(), key)
+    stored = access_urls.get(key)
     if stored is None:
-        msg = f"no access URL stored for provider {provider_key!r}; claim one first"
+        msg = f"no access URL stored for provider {key!r}; claim one first"
         raise AccessUrlStoreError(msg)
-    return validate_access_url(entry.root, stored.get_secret_value(), provider=provider_key)
+    return validate_access_url(entry.root, stored.get_secret_value(), provider=key)
 
 
 def _forwarded_accounts_params(request: Request) -> list[tuple[str, str]]:
@@ -92,15 +92,15 @@ def create_app(config: Config, access_urls: Mapping[str, SecretStr]) -> FastAPI:
     is reported here, before uvicorn starts, not on the first request.
     """
     provider_access_urls = {
-        provider.provider_key: _resolve_access_url(config, access_urls, provider.provider_key)
+        provider.key: _resolve_access_url(config, access_urls, provider.key)
         for provider in config.providers
     }
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         provider_clients = {
-            provider_key: build_provider_client(access_url)
-            for provider_key, access_url in provider_access_urls.items()
+            key: build_provider_client(access_url)
+            for key, access_url in provider_access_urls.items()
         }
         app.state.app_state = _AppState(
             provider_clients=provider_clients, request_counter=RequestCounter()
@@ -133,8 +133,8 @@ def create_app(config: Config, access_urls: Mapping[str, SecretStr]) -> FastAPI:
             seen_provider_keys: set[str] = set()
             for account_id in account_ids:
                 provider = resolve_provider_for_account(account_id, config.providers)
-                if provider.provider_key not in seen_provider_keys:
-                    seen_provider_keys.add(provider.provider_key)
+                if provider.key not in seen_provider_keys:
+                    seen_provider_keys.add(provider.key)
                     providers_to_query.append(provider)
         else:
             providers_to_query = list(config.providers)

@@ -12,7 +12,7 @@ from urllib.parse import quote, urlsplit
 from platformdirs import user_config_dir
 from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator, model_validator
 
-from .provider_allowlist import ProviderEntry, find_provider, merged_providers
+from .provider_registry import ProviderEntry, find_provider, merged_providers
 from .url_validation import UrlValidationError, is_loopback_host, parse_root
 
 
@@ -30,10 +30,10 @@ class ConfigError(Exception):
 class Provider(BaseModel):
     """A single SimpleFIN provider this aggregator proxies."""
 
-    # An allowlist slug, built-in or from `allowlist` below. It identifies the
+    # A provider key, built-in or from `custom_providers` below. It identifies the
     # provider everywhere: as the store's key, as the provider client dict's
     # key, and in log lines.
-    provider_key: str
+    key: str
 
 
 def _parse_root_or_value_error(raw: str) -> NormalizedUrl:
@@ -49,15 +49,15 @@ def _parse_root_or_value_error(raw: str) -> NormalizedUrl:
         raise ValueError(str(exc)) from None
 
 
-class AllowlistEntry(BaseModel):
-    """A provider this config adds to the built-in allowlist.
+class CustomProvider(BaseModel):
+    """A provider this config adds to the built-in list.
 
     Editing this entry in the config file is deliberately the only way
-    to add one -- see `provider_allowlist.py` for why there is no flag
+    to add one -- see `provider_registry.py` for why there is no flag
     and no prompt.
     """
 
-    slug: str
+    key: str
     label: str
     root: str
 
@@ -74,9 +74,9 @@ class AllowlistEntry(BaseModel):
         return value
 
     def as_provider_entry(self) -> ProviderEntry:
-        """Convert to an allowlist entry, validating the slug and the root."""
+        """Convert to a registry entry, validating the key and the root."""
         return ProviderEntry(
-            slug=self.slug, label=self.label, root=_parse_root_or_value_error(self.root)
+            key=self.key, label=self.label, root=_parse_root_or_value_error(self.root)
         )
 
 
@@ -101,25 +101,25 @@ class Config(BaseModel):
     # Schema and internal types are already a list for the multi-provider version to come;
     # this version only supports exactly one.
     providers: list[Provider] = Field(min_length=1, max_length=1)
-    allowlist: list[AllowlistEntry] = []
+    custom_providers: list[CustomProvider] = []
     client: ClientAuth
     claim_token: SecretStr
     base_url: str
 
     def provider_entries(self) -> tuple[ProviderEntry, ...]:
         """Every provider a token may be claimed from: the built-in ones plus this config's."""
-        return merged_providers(entry.as_provider_entry() for entry in self.allowlist)
+        return merged_providers(entry.as_provider_entry() for entry in self.custom_providers)
 
     @model_validator(mode="after")
     def _check_provider_keys(self) -> Config:
-        """Fail at load time on a provider_key no allowlist entry defines.
+        """Fail at load time on a key no provider defines.
 
         Checked here rather than at first use so that a dangling reference is
         reported by every command, not just the one that would dereference it.
         """
         entries = self.provider_entries()
         for provider in self.providers:
-            _ = find_provider(entries, provider.provider_key)
+            _ = find_provider(entries, provider.key)
         return self
 
     @field_validator("claim_token")
@@ -152,8 +152,17 @@ class Config(BaseModel):
         return value
 
 
-def default_config_path() -> Path:
-    return Path(user_config_dir(APP_NAME)) / "config.toml"
+CONFIG_FILENAME = "config.toml"
+
+
+def default_config_dir() -> Path:
+    return Path(user_config_dir(APP_NAME))
+
+
+def config_path(config_dir: Path | None = None) -> Path:
+    """Where config.toml lives: in `config_dir`, or the platform default."""
+    directory = config_dir if config_dir is not None else default_config_dir()
+    return directory / CONFIG_FILENAME
 
 
 def warn_if_permissive(path: Path) -> None:

@@ -181,7 +181,7 @@ def _has_dot_segment(path: str) -> bool:
 
 
 def parse_root(raw: str) -> NormalizedUrl:
-    """Parse a provider root URL from the static allowlist or from config."""
+    """Parse a provider root URL from the built-in list or from config."""
     root = parse_url(raw)
 
     if root.has_creds:
@@ -212,7 +212,7 @@ def _check_matches_root(root: NormalizedUrl, url: NormalizedUrl, kind: str, prov
     # ("https://h/simplefin" against a "https://h/simplefin/" root), while
     # still failing on a segment boundary ("https://h/simplefin-evil").
     if not (url.origin_and_path + "/").startswith(root.origin_and_path):
-        # `provider` names the entry in the message. Pass a slug from
+        # `provider` names the entry in the message. Pass a key from
         # find_provider; ProviderEntry constrains those to [a-z0-9-]+.
         msg = (
             f"{kind} {url.origin} is not valid for provider {provider!r}: "

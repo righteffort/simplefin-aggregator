@@ -24,11 +24,10 @@ SETUP_TOKEN="$1"
 
 PORT=8321
 # The demo bridge is the built-in `simplefin-bridge` provider, so no
-# [[allowlist]] entry is needed -- its root already covers the demo claim URL.
+# [[custom_providers]] entry is needed -- its root already covers the demo claim URL.
 PROVIDER_KEY="simplefin-bridge"
-WORK_DIR="$(mktemp -d)"
-CONFIG_FILE="${WORK_DIR}/config.toml"
-CACHE_DIR="${WORK_DIR}/cache"
+CONFIG_DIR="$(mktemp -d)"
+CONFIG_FILE="${CONFIG_DIR}/config.toml"
 SERVER_PID=""
 
 cleanup() {
@@ -37,12 +36,12 @@ cleanup() {
     wait "$SERVER_PID" 2>/dev/null || true
   fi
   # Holds the claimed access URL, so remove it even on failure.
-  rm -rf "$WORK_DIR"
+  rm -rf "$CONFIG_DIR"
 }
 trap cleanup EXIT
 
 # Written before claiming: `claim` reads the config, and stores what it claims
-# under the provider_key named here.
+# under the key named here.
 cat >"$CONFIG_FILE" <<EOF
 bind_host = "127.0.0.1"
 bind_port = ${PORT}
@@ -54,7 +53,7 @@ username = "manual-verify"
 password = "manual-verify-password"
 
 [[providers]]
-provider_key = "${PROVIDER_KEY}"
+key = "${PROVIDER_KEY}"
 EOF
 chmod 600 "$CONFIG_FILE"
 
@@ -63,15 +62,15 @@ echo "==> Claiming the SimpleFIN demo setup token..."
 # PROVIDER_KEY rather than a hardcoded number, so adding a built-in provider
 # cannot silently point this at the wrong one.
 MENU_CHOICE="$(uv run python -c "
-from simplefin_aggregator.provider_allowlist import KNOWN_PROVIDERS
-print(next(i for i, p in enumerate(KNOWN_PROVIDERS, 1) if p.slug == '${PROVIDER_KEY}'))
+from simplefin_aggregator.provider_registry import KNOWN_PROVIDERS
+print(next(i for i, p in enumerate(KNOWN_PROVIDERS, 1) if p.key == '${PROVIDER_KEY}'))
 ")"
 echo "$MENU_CHOICE" | uv run simplefin-aggregator claim "$SETUP_TOKEN" \
-  --config "$CONFIG_FILE" --cachedir "$CACHE_DIR"
+  --config-dir "$CONFIG_DIR"
 echo "    access URL claimed and stored (not printed; it embeds credentials)"
 
 echo "==> Starting simplefin-aggregator on 127.0.0.1:${PORT}..."
-uv run simplefin-aggregator serve --config "$CONFIG_FILE" --cachedir "$CACHE_DIR" &
+uv run simplefin-aggregator serve --config-dir "$CONFIG_DIR" &
 SERVER_PID=$!
 
 echo "==> Waiting for the server to start listening..."

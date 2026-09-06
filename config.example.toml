@@ -1,54 +1,34 @@
-# simplefin-aggregator config.
+# simplefin-aggregator config. See README.md for details.
 #
-# This file contains credentials (client app basic-auth password, claim
-# token). It must be readable only by its owner: chmod 600 config.toml
+# Holds credentials (the client app password, the claim token), so
+# keep this file readable only by its owner.
 #
-# Provider access URLs are NOT here -- `claim` stores them separately, under
-# the cache directory. See the README.
+# Provider access URLs are not here. `claim` writes them to
+# provider_creds.json, in this same directory.
 
-# Change bind_host to 0.0.0.0 when running via Docker
+# 0.0.0.0 when running under Docker.
 bind_host = "127.0.0.1"
 bind_port = 8080
 
-# The base URL this aggregator advertises in the access URL it hands
-# back from POST /simplefin/claim/{token}. Set it to the URL reachable
-# from the client.
+# The URL this aggregator is reachable at from the client app.
 base_url = "http://127.0.0.1:8080"
 
-# The secret path segment for POST /simplefin/claim/{token}. Pick a long
-# random value; it is a shared secret, not a public constant.
+# Shared secret in the claim URL path. Use a long random value.
 claim_token = "replace-with-a-long-random-token"
 
 [client]
-# Basic-auth credentials the client (for example, Actual Budget)
-# must present to GET /simplefin/accounts.
+# What the client app must present to GET /simplefin/accounts.
 username = "actual-budget"
 password = "replace-with-a-strong-password"
 
-# The provider this aggregator proxies, named by its provider_key: the slug of
-# a built-in provider, or of an [[allowlist]] entry below. Exactly one
-# [[providers]] entry is allowed; a second is rejected.
-#
-# Built-in slugs:
-#   simplefin-bridge   SimpleFIN Bridge (beta)
-#   lunchflow          Lunch Flow
-#   redbark            Redbark
+# The providers to aggregate, by key. Built-in keys: simplefin-bridge,
+# lunchflow, redbark.
 [[providers]]
-provider_key = "simplefin-bridge"
+key = "simplefin-bridge"
 
-# A provider the built-in list does not name -- a bridge you run yourself, or a
-# third party that is not built in -- has to be declared here before `claim`
-# will offer it or accept a token from it.
+# Providers the built-in list does not name.
 #
-# `slug` must match [a-z0-9-]+ and must be unique. If you ever change
-# it, you must also change the corresponding entry for the provider in
-# the access URL store (see the README for details).
-#
-# `root` is matched as a prefix against both the claim URL inside the setup
-# token and the access URL the provider returns, so it must be the URL those
-# sit under. https, unless the host is a literal loopback IP address.
-#
-# [[allowlist]]
-# slug = "my-bridge"
+# [[custom_providers]]
+# key = "my-bridge"
 # label = "My Own Bridge"
 # root = "https://simplefin.example.com/simplefin"

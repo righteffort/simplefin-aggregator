@@ -302,7 +302,7 @@ def test_validate_access_url_rejects_fragment() -> None:
 
 
 def test_validate_access_url_rejects_trailing_question_mark() -> None:
-    # Must never reach the cache: a stored URL ending in "?" would swallow a
+    # Must never reach the store: a stored URL ending in "?" would swallow a
     # request path appended to it.
     with pytest.raises(UrlValidationError):
         _ = validate_access_url(
@@ -557,7 +557,7 @@ def test_parse_url_percent_encodes_characters_not_legal_in_a_path(
 
 
 def test_claim_url_with_escapes_on_the_right_host_is_still_rejected() -> None:
-    # Passing the allowlist check is not enough to be echoed safely.
+    # Passing the root check is not enough to be echoed safely.
     with pytest.raises(UrlValidationError):
         _ = validate_claim_url(
             ROOT, "https://simplefin.invalid/simplefin/\x1b[2Jowned", provider=PROVIDER

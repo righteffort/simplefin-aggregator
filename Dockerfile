@@ -21,7 +21,4 @@ ENV UV_CACHE_DIR=/tmp/uv-cache
 EXPOSE 8080
 
 ENTRYPOINT ["uv", "run", "--no-sync", "simplefin-aggregator"]
-# --cachedir names the mount point for the access URLs `claim` stored. serve
-# only reads them, so an unmounted /cache is not an error here -- it surfaces
-# as "no access URL stored for provider ...".
-CMD ["serve", "--config", "/config/config.toml", "--cachedir", "/cache"]
+CMD ["serve", "--config-dir", "/config"]

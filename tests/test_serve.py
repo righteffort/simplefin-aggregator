@@ -7,7 +7,7 @@ from typer.testing import CliRunner
 
 from simplefin_aggregator import cli
 from simplefin_aggregator.app import CLAIM_PATH_PREFIX
-from simplefin_aggregator.provider_access_urls import access_urls_path, save_access_url
+from simplefin_aggregator.provider_access_urls import provider_creds_path, save_access_url
 
 
 if TYPE_CHECKING:
@@ -28,13 +28,13 @@ claim_token = "claim-token"
 username = "client-username"
 password = "s3cret-password"
 
-[[allowlist]]
-slug = "my-bank"
+[[custom_providers]]
+key = "my-bank"
 label = "My Bank"
 root = "https://provider.example.com/simplefin"
 
 [[providers]]
-provider_key = "my-bank"
+key = "my-bank"
 """
 
 
@@ -50,19 +50,19 @@ def _write_config(tmp_path: Path, contents: str) -> Path:
 
 def _claim(tmp_path: Path, access_url: str = ACCESS_URL) -> None:
     """Put an access URL in the store, as `claim` would have."""
-    save_access_url(access_urls_path(tmp_path), "my-bank", access_url)
+    save_access_url(provider_creds_path(tmp_path), "my-bank", access_url)
 
 
-def _serve_args(tmp_path: Path, config_path: Path) -> list[str]:
-    # --cachedir is never omitted in tests: without it serve would read the
-    # real store in the developer's cache directory.
-    return ["serve", "--config", str(config_path), "--cachedir", str(tmp_path)]
+def _serve_args(tmp_path: Path) -> list[str]:
+    # --config-dir is never omitted in tests: without it serve would read the
+    # developer's own config and credentials.
+    return ["serve", "--config-dir", str(tmp_path)]
 
 
 def test_serve_runs_uvicorn_with_configured_bind_address(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config_path = _write_config(tmp_path, VALID_TOML)
+    _ = _write_config(tmp_path, VALID_TOML)
 
     calls: list[dict[str, object]] = []
 
@@ -73,7 +73,7 @@ def test_serve_runs_uvicorn_with_configured_bind_address(
 
     _claim(tmp_path)
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path, config_path))
+    result = runner.invoke(cli.app, _serve_args(tmp_path))
 
     assert result.exit_code == 0
     assert len(calls) == 1
@@ -85,7 +85,7 @@ def test_serve_wires_up_real_claim_token_redaction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Serve's install_access_log_redaction() call uses app.py's real CLAIM_PATH_PREFIX."""
-    config_path = _write_config(tmp_path, VALID_TOML)
+    _ = _write_config(tmp_path, VALID_TOML)
 
     def fake_run(*_args: object, **_kwargs: object) -> None:
         return None
@@ -94,7 +94,7 @@ def test_serve_wires_up_real_claim_token_redaction(
 
     _claim(tmp_path)
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path, config_path))
+    result = runner.invoke(cli.app, _serve_args(tmp_path))
     assert result.exit_code == 0
 
     logger = logging.getLogger("uvicorn.access")
@@ -115,7 +115,7 @@ def test_serve_wires_up_real_claim_token_redaction(
 def test_serve_fails_without_starting_uvicorn_on_invalid_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config_path = _write_config(tmp_path, "this is not [valid toml")
+    _ = _write_config(tmp_path, "this is not [valid toml")
 
     calls: list[object] = []
 
@@ -124,7 +124,7 @@ def test_serve_fails_without_starting_uvicorn_on_invalid_config(
 
     monkeypatch.setattr(cli.uvicorn, "run", fake_run)  # pyright: ignore[reportPrivateLocalImportUsage]
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path, config_path))
+    result = runner.invoke(cli.app, _serve_args(tmp_path))
 
     assert result.exit_code == 1
     assert calls == []
@@ -145,10 +145,10 @@ def _fake_uvicorn(monkeypatch: pytest.MonkeyPatch) -> list[object]:
 def test_serve_fails_when_the_provider_has_not_been_claimed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config_path = _write_config(tmp_path, VALID_TOML)
+    _ = _write_config(tmp_path, VALID_TOML)
     calls = _fake_uvicorn(monkeypatch)
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path, config_path))
+    result = runner.invoke(cli.app, _serve_args(tmp_path))
 
     assert result.exit_code == 1
     assert calls == []
@@ -163,11 +163,11 @@ def test_serve_fails_when_the_stored_access_url_no_longer_matches_the_root(
         'root = "https://provider.example.com/simplefin"',
         'root = "https://other.example.com/simplefin"',
     )
-    config_path = _write_config(tmp_path, moved_root)
+    _ = _write_config(tmp_path, moved_root)
     _claim(tmp_path)
     calls = _fake_uvicorn(monkeypatch)
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path, config_path))
+    result = runner.invoke(cli.app, _serve_args(tmp_path))
 
     assert result.exit_code == 1
     assert calls == []
@@ -178,11 +178,11 @@ def test_serve_fails_when_the_stored_access_url_no_longer_matches_the_root(
 def test_serve_fails_on_a_malformed_access_url_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config_path = _write_config(tmp_path, VALID_TOML)
-    _ = access_urls_path(tmp_path).write_text("{not json")
+    _ = _write_config(tmp_path, VALID_TOML)
+    _ = provider_creds_path(tmp_path).write_text("{not json")
     calls = _fake_uvicorn(monkeypatch)
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path, config_path))
+    result = runner.invoke(cli.app, _serve_args(tmp_path))
 
     assert result.exit_code == 1
     assert calls == []
