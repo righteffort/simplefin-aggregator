@@ -283,6 +283,14 @@ out-of-scope kindness of also accepting a label; do not build it now.
   asymmetry belongs in `ARCHITECTURE.md`, not in a flag on a helper or a
   warning string hedging about which case it is in. Do not warn about the lock
   file, which holds nothing.
+- `load_config` renders a validation error from pydantic's raw location and
+  message, where `load_state_file` renders only the parts the schema declares
+  and drops the one message that interpolates the value it rejected. Neither
+  leak is reachable through `Config`'s present shape -- it has no
+  mapping-typed field to put a file's key in a location, and no discriminated
+  union to produce that message -- so this is an accident of which loader got
+  extracted rather than a live defect. Converge `load_config` onto the shared
+  helpers while `config.py` is open.
 - `build_setup_token` and `build_access_url` currently take a whole `Config`
   to read two fields out of it. They become functions of `base_url` and the
   secret(s) they embed.
