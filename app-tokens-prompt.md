@@ -344,7 +344,13 @@ where it is written once for both stores. Move it to a module of its own with a 
 error type replacing `AccessUrlStoreError`, and leave the two stores holding
 only their own schema and semantics. Two callers with identical requirements
 is when extraction is warranted; this is not a framework, it is two functions.
-Mechanical, no behaviour change, tests unchanged except for the renamed error.
+
+Mostly mechanical, but not entirely, and the exceptions are the point: the
+directory `fsync` above; a missing file validated as an empty document rather
+than short-circuited past the model, so that a model without defaults fails as
+a state-file error like any other bad shape; and a validation error rendered
+only from the parts the schema declares, which keeps a credential in key
+position out of a message the CLI prints. The tests move and grow with it.
 
 **B. The app token store.** The new module: the two record variants, the
 digest helpers, the constructors that mint a setup token secret and that spend
