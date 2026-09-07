@@ -1,8 +1,8 @@
 # simplefin-aggregator
 
 A server that implements the [SimpleFIN Bridge
-protocol](https://www.simplefin.org/protocol.html) by aggregating the
-data from or more SimpleFIN providers. It is intended for use by a
+protocol (version 1)](https://www.simplefin.org/protocol-v1.html) by aggregating the
+data from one or more SimpleFIN providers. It is intended for use by a
 personal finance app -- Actual Budget is the motivating example, but
 any personal finance app that supports SimpleFIN will work.
 
@@ -27,10 +27,15 @@ credentials and claim token. **This comes first: `claim` reads the config, so
 it has to exist and be valid before you can claim anything.**
 
 ```sh
-cp config.example.toml config.toml
-chmod 600 config.toml
-$EDITOR config.toml
+mkdir -p -m 700 ~/.config/simplefin-aggregator
+cp -i config.example.toml ~/.config/simplefin-aggregator/config.toml
+chmod 600 ~/.config/simplefin-aggregator/config.toml
+$EDITOR ~/.config/simplefin-aggregator/config.toml
 ```
+
+That path is where every subcommand looks by default on Linux; pass
+`--config-dir /path/to/dir` to put it somewhere else. `provider_creds.json`
+(below) lives in the same directory -- the two always travel together.
 
 `[[providers]]` names the providers to aggregate, by key:
 
@@ -85,12 +90,6 @@ python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 
 **`config.toml` contains credentials in plain text — the client app password
 and the claim token — and should be readable only by its owner.**
-
-By default, `simplefin-aggregator` reads `config.toml` from the platform
-config directory (typically `~/.config/simplefin-aggregator` on Linux). Pass
-`--config-dir /path/to/dir` to any subcommand to use a different one. That
-directory also holds `provider_creds.json` (below); the two always live
-together.
 
 ### 2. Claim a SimpleFIN setup token
 

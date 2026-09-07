@@ -49,9 +49,11 @@ class UrlValidationError(Exception):
     name it in full.
 
     This holds for input well-formed enough to parse as intended. A URL
-    malformed past that point can put a fragment of a credential in `origin` --
-    an unencoded "/" in a password ends the authority early, and the password
-    prefix is then read as the port. That gap is left open deliberately: the
+    malformed past that point can put a fragment of a credential in `origin`:
+    an unencoded "/" in a password ends the authority early, so the username is
+    read as the host and the password's leading characters as the port. Only
+    digits survive that -- any other port text fails the parse, which reports
+    "not a valid URL" and nothing else. That gap is left open deliberately: the
     checks needed to close it cost more in complexity than the corner case is
     worth.
     """
