@@ -291,6 +291,26 @@ out-of-scope kindness of also accepting a label; do not build it now.
   union to produce that message -- so this is an accident of which loader got
   extracted rather than a live defect. Converge `load_config` onto the shared
   helpers while `config.py` is open.
+- **Make that rendering a safelist rather than a denylist.**
+  `_safe_location` and `_safe_message` work by subtracting the dangerous parts
+  from two strings pydantic builds out of file contents, so every model shape
+  added later is another chance to subtract the wrong set -- which is how a
+  discriminated union's tag reached stderr. Render from the filtered location
+  and `error["type"]` instead, and stop reading `msg` at all: a type is a
+  fixed slug pydantic never interpolates, so no file content can reach a
+  message by construction. `_safe_message` then deletes itself and the
+  misparse corpus drops from the defense to a regression check. The messages
+  get terser without getting less useful: the location is already coarse
+  enough that either version sends the reader to the file.
+- **State the flag posture for opening a file in the config directory once,
+  and derive every open from it.** Four opens across two modules currently
+  choose their own flags, which is how the lock file came to be the one that
+  followed a symlink. The posture is that the directory may be one another
+  local user can write, so a path this application opens must not be a link
+  to somewhere else.
+- `save_access_url` takes a plain `str` and wraps it, so an access URL is a
+  `SecretStr` at rest, a bare `str` across that one call, and a `SecretStr`
+  again on the way in. Take a `SecretStr` and close the window.
 - `build_setup_token` and `build_access_url` currently take a whole `Config`
   to read two fields out of it. They become functions of `base_url` and the
   secret(s) they embed.
@@ -393,7 +413,15 @@ its credentials the old claim path cannot work.
   live-store versus snapshot-config distinction, the claim and
   `/accounts` flows, the locking, and the app token store as a third
   piece of on-disk state whose integrity matters more than its
-  confidentiality.
+  confidentiality. Say which of this application's defenses remove a
+  secret and which handle one carefully, because the second kind is
+  where every defect in this work was found: the digest-only store and
+  `SecretStr` produced none, while opening a file with the right flags,
+  rendering an error minus its dangerous parts, and carrying a live
+  credential between two representations produced one each. A credential
+  still changes type as it travels -- `new_app` hands back a bare `str`
+  so the CLI can print it once -- and each transition is held closed by
+  discipline rather than by the type.
 - agent-facing: `AGENTS.md` update to reflect any learnings/memories from the
   session. If you make changes here, do not blindly append, synthesize
   an improved file that stands on its own.
