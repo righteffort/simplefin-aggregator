@@ -7,6 +7,18 @@ and give the operator three commands to manage the tokens it issues.
 review cycle, comment and commit discipline, secrets discipline, etc.. Read it first
 and follow it; nothing about how to work is repeated here.
 
+## How this task is being worked, in place of `AGENTS.md`'s gates
+
+This applies to this task only. It is not a project memory and not a change to
+`AGENTS.md`.
+
+- Each of steps B, C1, C2 and D concludes with a single commit, as usual.
+- Proceed without waiting for the human, including on to the next step. The
+  `AGENTS.md` cycle's "present the work, then stop" gates do not apply here.
+- The one exception, and it is not optional: **stop and escalate** if a
+  load-bearing decision or a significant question comes up, or if a
+  disagreement with a reviewer is not settled within one or two rounds.
+
 Read `docs/ARCHITECTURE.md` for the map of the code. It is current as of the start of the work, and this task invalidates parts of it —
 the final step brings it back into line.
 
