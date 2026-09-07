@@ -26,7 +26,7 @@ PROVIDER_LABEL = "My Bank"
 PROVIDER_ROOT = "https://provider.example.com/simplefin"
 CLAIM_URL = f"{PROVIDER_ROOT}/claim/some-setup-token"
 SETUP_TOKEN = base64.b64encode(CLAIM_URL.encode("ascii")).decode("ascii")
-PROVIDER_PASSWORD = "s3cret-provider-password"
+PROVIDER_PASSWORD = "s3cret-provider-password"  # noqa: S105
 # Derived, so that changing the password cannot leave the leak assertions
 # below testing for a string no URL in this file contains.
 ACCESS_URL = f"https://user:{PROVIDER_PASSWORD}@provider.example.com/simplefin"
@@ -214,7 +214,7 @@ def test_claim_fails_on_an_unwritable_config_directory_before_spending_the_token
 
 @pytest.mark.usefixtures("claim_succeeds")
 def test_claim_warns_when_no_providers_entry_names_the_claimed_key(tmp_path: Path) -> None:
-    """serve looks the store up by the key its config names, not by what was claimed."""
+    """Serve looks the store up by the key its config names, not by what was claimed."""
     # Only the [[providers]] key -- the last one in the file -- so the custom
     # provider stays claimable while nothing in config refers to it.
     head, _, tail = CONFIG_TOML.rpartition(f'key = "{PROVIDER_KEY}"')

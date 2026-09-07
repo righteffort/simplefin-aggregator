@@ -31,7 +31,7 @@ LOOPBACK_ROOT = parse_root("http://127.0.0.1/simplefin")
 OTHER_ROOT = parse_root("https://other-provider.invalid/simplefin")
 
 # Stands in for the one-time setup token a real claim URL carries in its path.
-SETUP_TOKEN = "s3cret-setup-token"
+SETUP_TOKEN = "s3cret-setup-token"  # noqa: S105
 
 PROVIDER = "test-provider"
 
@@ -272,7 +272,7 @@ def test_validate_access_url_accepts_the_root_itself_with_credentials() -> None:
         ROOT, "https://user:pass@simplefin.invalid/simplefin", provider=PROVIDER
     )
     assert url.username == "user"
-    assert url.password == "pass"
+    assert url.password == "pass"  # noqa: S105
 
 
 ACCESS_URLS_WITHOUT_CREDENTIALS = [
@@ -503,7 +503,7 @@ def test_parse_url_rejects_control_characters(raw: str) -> None:
         _ = parse_url(raw)
 
 
-SECRET = "s3cret-provider-password"
+SECRET = "s3cret-provider-password"  # noqa: S105
 
 # A password sitting where a password belongs, spelled in ways that make the
 # parse fail or make it disagree about where the authority ends. However the

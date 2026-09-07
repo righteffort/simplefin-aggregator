@@ -173,7 +173,7 @@ def test_a_provider_request_names_no_credentials_in_the_logs_or_the_body(
     also covers validating the stored URL at startup, building the client from
     it, and rendering the failure to the client app.
     """
-    password = "s3cret-provider-password"
+    password = "s3cret-provider-password"  # noqa: S105
 
     with _loopback_provider() as port, caplog.at_level(logging.INFO):
         app = make_app(

@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from simplefin_aggregator.config import Config
 
 
-def _config(base_url: str, username: str = "client-username", password: str = "s3cret") -> Config:
+def _config(base_url: str, username: str = "client-username", password: str = "s3cret") -> Config:  # noqa: S107
     return make_config(base_url=base_url, username=username, password=password)
 
 
@@ -22,7 +22,7 @@ def test_build_access_url_embeds_client_credentials_and_simplefin_path() -> None
 
 
 def test_build_access_url_percent_encodes_special_characters_in_credentials() -> None:
-    config = _config("http://127.0.0.1:8080", username="user@name", password="p@ss:word")
+    config = _config("http://127.0.0.1:8080", username="user@name", password="p@ss:word")  # noqa: S106
 
     assert build_access_url(config) == "http://user%40name:p%40ss%3Aword@127.0.0.1:8080/simplefin"
 

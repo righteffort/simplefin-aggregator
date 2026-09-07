@@ -46,9 +46,9 @@ def install_provider_transport(app: FastAPI, key: str, handler: MockHandler) -> 
 def make_config(  # noqa: PLR0913
     *,
     base_url: str = "http://127.0.0.1:8080",
-    claim_token: str = "the-claim-token",
+    claim_token: str = "the-claim-token",  # noqa: S107
     username: str = "client-username",
-    password: str = "s3cret-password",
+    password: str = "s3cret-password",  # noqa: S107
     key: str = PROVIDER_KEY,
     root: str = PROVIDER_ROOT,
 ) -> Config:
