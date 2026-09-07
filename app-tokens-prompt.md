@@ -133,15 +133,24 @@ clock seam for tests; assert the fields round-trip and move on.
 
 ### Concurrency
 
-Three processes read-modify-write this file: `app new`, `app revoke`,
+Four writers read-modify-write this file: `app new`, `app revoke`,
 `app regen`, and the server's claim handler. In practice this is one person
 who does not run two commands at once, but the server is a genuine source of
 parallelism today and more so if anyone ever gives it internal concurrency.
 
-- **Writers take an exclusive `fcntl.flock`** on a sidecar `app_tokens.lock`
-  in the same directory, held across the whole read-modify-write. Lock a
-  sidecar, not the store itself: the atomic write replaces the file, so a lock
-  held on the store's inode does not guard the file that ends up at that path.
+- **Writers take an exclusive `fcntl.flock`** on a sidecar lock file in the
+  same directory, held across the whole read-modify-write. Lock a sidecar, not
+  the store itself: the atomic write replaces the file, so a lock held on the
+  store's inode does not guard the file that ends up at that path.
+- **The lock belongs to the shared state-file helper, not to this store**, so
+  that it covers `provider_creds.json` too, and each store gets its own
+  sidecar beside it. `save_access_url` is itself an unlocked read-modify-write:
+  two `claim` processes at once each save a different provider and the second
+  replace drops the first, losing an access URL whose one-time setup token has
+  already been spent -- the one loss this application cannot undo. Step A
+  extracts the helper precisely because both stores turn out to have identical
+  file-handling requirements; locking is one more of them, so it is written
+  once rather than twice.
 - **Readers take no lock.** The existing write-then-rename means a reader sees
   the old file or the new one, never a torn one.
 - `fcntl` is POSIX-only. That is fine and already true of this application
@@ -171,6 +180,15 @@ durability is load-bearing in a way it is not for `provider_creds.json`.
 credentials the server does not recognise, and without the `fsync` that rule is
 only page-cache deep — the machine can lose power after the 200 and come back
 with no record of the app. It is also why the write stays in the request path.
+
+The directory `fsync` is the one half that is best-effort. It happens after
+the rename, by which point the new file is in place and every reader already
+sees it, so a failure there is a weaker durability guarantee than was asked
+for and not a failed save -- and raising would tell `claim` it had lost a
+credential it did in fact store, which is the more expensive wrong answer. It
+is reachable without an exotic filesystem: a config directory that is writable
+but not readable takes every write the store makes and still refuses the
+read-only open this `fsync` needs.
 
 The cost is a syscall on writes that happen when a human runs a command or an
 app is claimed, never per request.
@@ -329,8 +347,13 @@ is when extraction is warranted; this is not a framework, it is two functions.
 Mechanical, no behaviour change, tests unchanged except for the renamed error.
 
 **B. The app token store.** The new module: the two record variants, the
-digest helpers, load, and the flock'd read-modify-write. Nothing uses it yet;
-it is tested on its own.
+digest helpers, the constructors that mint a setup token secret and that spend
+one for credentials, load, and the flock'd read-modify-write (which goes in
+the shared helper -- see Concurrency). The store owns record construction, so
+that the timestamp and the digesting live in one place instead of being
+assembled inline by both `cli.py` and the claim route, which are the two
+places where getting it wrong writes a plaintext credential to disk. Nothing
+uses it yet; it is tested on its own.
 
 **C1. The `app` commands.** `cli.py` gains the four commands on top of step
 B's store. Nothing else changes: `config.toml` keeps `claim_token` and
