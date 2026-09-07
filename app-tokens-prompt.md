@@ -436,7 +436,30 @@ its credentials the old claim path cannot work.
   discipline rather than by the type.
 - agent-facing: `AGENTS.md` update to reflect any learnings/memories from the
   session. If you make changes here, do not blindly append, synthesize
-  an improved file that stands on its own.
+  an improved file that stands on its own. The section above on tests that do
+  not assert their own premise is the main candidate: it is a general rule
+  about writing tests here, it recurred three times, and the existing
+  non-vacuousness rule does not catch it.
+
+## Tests that do not assert their own premise
+
+Three tests in this work passed while pinning nothing, all the same shape: the
+condition the test set up was never itself checked, so it could stop holding
+and the test would still pass.
+
+- A corrupted-digest input twelve characters long, rejected for its length
+  rather than for the non-ASCII character the constraint exists to catch. It
+  pinned neither clause.
+- `assert "claimed" in stdout`, satisfied by another row's `unclaimed`, so
+  nothing pinned that a claimed app renders as claimed.
+- A cleanup-failure test that checked the write's error survived the cleanup's,
+  and passed whether or not a cleanup was attempted at all.
+
+Mutating the code under test does not find these, because each survives the
+obvious mutation. What finds them is mutating what the test's *premise* rests
+on: weaken a compound constraint one clause at a time, replace a setup step
+with a no-op, remove the operation whose failure the test is about. If the
+test still passes, it was testing something else.
 
 ## Required tests
 
