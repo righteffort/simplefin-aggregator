@@ -73,7 +73,7 @@ docstring-code-format = true
 skip-magic-trailing-comma = true
 
 [tool.basedpyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
 pythonVersion = "3.12"
 typeCheckingMode = "recommended"
 

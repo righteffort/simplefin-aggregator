@@ -2,10 +2,10 @@
 
 This is the most sensitive file this application owns: an access URL embeds
 the Basic Auth credentials for a provider, and anything holding one can read
-the user's bank data. Hence mode 0600 on write, a warning on load if the mode
-is looser, and `SecretStr` values so that a stray repr cannot print one. None
-of it can be regenerated: a setup token is one-time-use, so a lost entry costs
-a fresh token from the provider.
+the user's bank data. None of it can be regenerated: a setup token is
+one-time-use, so a lost entry costs a fresh token from the provider. The file
+handling that follows from that -- 0600, atomic replace, an error path that
+never quotes the rejected input -- is in `state_file.py`.
 
 Entries are keyed by provider key, so two accounts at the same provider would
 collide on one key.
@@ -13,25 +13,19 @@ collide on one key.
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
-from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field, SecretStr, ValidationError, field_serializer
+from pydantic import BaseModel, Field, SecretStr, field_serializer
 
-from .config import default_config_dir, warn_if_permissive
+from .config import default_config_dir
+from .state_file import load_state_file, update_state_file
 
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
 PROVIDER_CREDS_FILENAME = "provider_creds.json"
-
-
-class AccessUrlStoreError(Exception):
-    """Raised when the access URL file exists but cannot be read or understood."""
 
 
 class _AccessUrlFile(BaseModel):
@@ -58,86 +52,15 @@ def provider_creds_path(config_dir: Path | None = None) -> Path:
 
 def load_access_urls(path: Path) -> dict[str, SecretStr]:
     """Read the store. A file that is not there yet is empty, not an error."""
-    try:
-        # utf-8, not the locale's, on both the read and the write below: JSON
-        # is UTF-8 by definition, and nothing in this file can be re-fetched if
-        # a locale change makes it unreadable.
-        raw = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return {}
-    except OSError as exc:
-        msg = f"cannot read access URL file {path}: {exc}"
-        raise AccessUrlStoreError(msg) from exc
-    except UnicodeDecodeError:
-        # Not the exception text: it quotes the byte it choked on, and this
-        # file holds credentials.
-        msg = f"access URL file {path} is not UTF-8 text"
-        raise AccessUrlStoreError(msg) from None
-
-    warn_if_permissive(path)
-
-    try:
-        data = cast(object, json.loads(raw))
-    except json.JSONDecodeError as exc:
-        msg = f"malformed JSON in {path}: {exc}"
-        raise AccessUrlStoreError(msg) from exc
-
-    try:
-        return _AccessUrlFile.model_validate(data).access_urls
-    except ValidationError as exc:
-        # Same rule as load_config: never str() a ValidationError, whose
-        # default rendering embeds the raw input -- here, access URLs with
-        # their credentials.
-        details = "\n".join(
-            f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
-            for error in exc.errors(include_url=False, include_input=False)
-        )
-        msg = f"invalid access URL file {path}:\n{details}"
-        raise AccessUrlStoreError(msg) from None
+    return load_state_file(path, _AccessUrlFile).access_urls
 
 
-def check_can_save(path: Path) -> None:
-    """Create the store's directory and fail now if it is not writable.
+def save_access_url(path: Path, key: str, access_url: SecretStr) -> None:
+    """Record one provider's access URL, leaving the others in place.
 
-    `claim` calls this before spending the setup token, so that a directory it
-    cannot write to is reported while the token can still be claimed again.
+    Takes the URL already wrapped, so that it is redacted from the moment the
+    provider hands it over rather than for every part of its life but the
+    argument to this call.
     """
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    except OSError as exc:
-        msg = f"cannot create {path.parent}: {exc}"
-        raise AccessUrlStoreError(msg) from exc
-
-    if not os.access(path.parent, os.W_OK | os.X_OK):
-        msg = f"cannot write access URL file {path}: {path.parent} is not writable"
-        raise AccessUrlStoreError(msg)
-
-
-def save_access_url(path: Path, key: str, access_url: str) -> None:
-    """Record one provider's access URL, leaving the others in place."""
-    stored = load_access_urls(path)
-    stored[key] = SecretStr(access_url)
-    contents = _AccessUrlFile(access_urls=stored).model_dump_json(indent=2)
-
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    # Write-then-rename: a crash mid-write must not leave the file truncated,
-    # since what it holds cannot be regenerated. `mkstemp` creates with 0600, so
-    # the persisted file has 0600 even if the prior version did not.
-    descriptor, temporary_name = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            _ = handle.write(contents + "\n")
-            # fsync before the rename, not just close. Otherwise the rename can
-            # reach disk while the data blocks have not, and a power loss
-            # leaves an empty file where the one thing this app cannot
-            # regenerate used to be.
-            handle.flush()
-            os.fsync(handle.fileno())
-        _ = temporary.replace(path)
-    finally:
-        # A successful replace leaves nothing at the temporary name, so this is
-        # a no-op then. On any failure -- including KeyboardInterrupt, which an
-        # `except OSError` would miss -- it keeps a partial file holding
-        # credentials from lingering in the directory.
-        temporary.unlink(missing_ok=True)
+    with update_state_file(path, _AccessUrlFile) as stored:
+        stored.access_urls[key] = access_url

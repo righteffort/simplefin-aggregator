@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import stat
-import sys
 import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 from platformdirs import user_config_dir
-from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from .provider_registry import ProviderEntry, find_provider, merged_providers
+from .state_file import describe_validation_failure, warn_if_permissive
 from .url_validation import UrlValidationError, is_loopback_host, parse_root
 
 
@@ -80,20 +79,12 @@ class CustomProvider(BaseModel):
         )
 
 
-class ClientAuth(BaseModel):
-    """The basic-auth credentials this aggregator requires from a client app."""
-
-    username: str
-    password: SecretStr
-
-
 class Config(BaseModel):
     """The parsed config file.
 
-    Treated as read-only once `load_config` returns: nothing mutates a Config,
-    and nothing rebinds app.state.config. Validators here may therefore
-    establish invariants -- see _check_provider_keys -- that hold for the
-    object's whole lifetime.
+    Treated as read-only once `load_config` returns: nothing mutates a Config
+    and nothing reloads one, so validators here may establish invariants --
+    see _check_provider_keys -- that hold for the object's whole lifetime.
     """
 
     bind_host: str = "127.0.0.1"
@@ -102,8 +93,6 @@ class Config(BaseModel):
     # this version only supports exactly one.
     providers: list[Provider] = Field(min_length=1, max_length=1)
     custom_providers: list[CustomProvider] = []
-    client: ClientAuth
-    claim_token: SecretStr
     base_url: str
 
     def provider_entries(self) -> tuple[ProviderEntry, ...]:
@@ -122,18 +111,16 @@ class Config(BaseModel):
             _ = find_provider(entries, provider.key)
         return self
 
-    @field_validator("claim_token")
-    @classmethod
-    def _validate_claim_token(cls, value: SecretStr) -> SecretStr:
-        token = value.get_secret_value()
-        if not token or quote(token, safe="") != token:
-            msg = "claim_token must be non-empty and URL-safe"
-            raise ValueError(msg)
-        return value
-
     @field_validator("base_url")
     @classmethod
     def _validate_base_url(cls, value: str) -> str:
+        if not value.isascii():
+            # A setup token carries this URL as ASCII, so an internationalized
+            # host has to arrive already encoded or the token cannot be built
+            # at all -- which would otherwise be discovered after `app new` had
+            # written a record for an app it could not hand a token to.
+            msg = "base_url must be ASCII; give an internationalized host in its encoded form"
+            raise ValueError(msg)
         parsed = urlsplit(value)
         if parsed.scheme not in ("http", "https"):
             msg = "base_url must be http or https"
@@ -165,18 +152,6 @@ def config_path(config_dir: Path | None = None) -> Path:
     return directory / CONFIG_FILENAME
 
 
-def warn_if_permissive(path: Path) -> None:
-    mode = path.stat().st_mode
-    if mode & (stat.S_IRWXG | stat.S_IRWXO):
-        print(
-            (
-                f"warning: {path} is readable or writable by group/other; "
-                "it contains credentials and should be chmod 600"
-            ),
-            file=sys.stderr,
-        )
-
-
 def load_config(path: Path) -> Config:
     try:
         # utf-8, not the locale's: TOML is UTF-8 by definition. The -sig
@@ -186,8 +161,7 @@ def load_config(path: Path) -> Config:
         msg = f"cannot read config file {path}: {exc}"
         raise ConfigError(msg) from exc
     except UnicodeDecodeError:
-        # Not the exception text: it quotes the byte it choked on, and this
-        # file holds credentials.
+        # Not the exception text: it quotes the byte it choked on.
         msg = f"config file {path} is not UTF-8 text"
         raise ConfigError(msg) from None
 
@@ -202,15 +176,9 @@ def load_config(path: Path) -> Config:
     try:
         return Config.model_validate(data)
     except ValidationError as exc:
-        # Never str(exc) directly: pydantic's default rendering includes each
-        # field's raw input value, which would print credentials (a provider
-        # root's userinfo, claim_token, passwords) straight to stderr on a
-        # validation failure. What keeps them out is that the message is built
-        # from `loc` and `msg` alone; include_input=False is belt-and-braces
-        # over a value this never reads.
-        details = "\n".join(
-            f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"
-            for error in exc.errors(include_url=False, include_input=False)
-        )
-        msg = f"invalid config in {path}:\n{details}"
+        # The same rendering the state files use, for the same reason: a
+        # provider root can carry userinfo, and pydantic's own rendering would
+        # quote it back. Nothing here is exempt because this file no longer
+        # holds credentials -- a root in it still does.
+        msg = f"invalid config in {path}:\n{describe_validation_failure(Config, exc)}"
         raise ConfigError(msg) from None

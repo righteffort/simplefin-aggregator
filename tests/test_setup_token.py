@@ -2,31 +2,29 @@ import base64
 
 from simplefin_aggregator.setup_token import build_setup_token
 
-from .support import make_config
+
+CLAIM_SECRET = "my-secret-token"  # noqa: S105
 
 
-def test_build_setup_token_encodes_the_claim_url() -> None:
-    config = make_config(base_url="http://127.0.0.1:8080", claim_token="my-secret-token")  # noqa: S106
-
-    setup_token = build_setup_token(config)
-
-    decoded = base64.b64decode(setup_token, validate=True).decode("ascii")
-    assert decoded == "http://127.0.0.1:8080/simplefin/claim/my-secret-token"
+def _claim_url(setup_token: str) -> str:
+    return base64.b64decode(setup_token, validate=True).decode("ascii")
 
 
-def test_build_setup_token_strips_trailing_slash_from_base_url() -> None:
-    config = make_config(base_url="http://127.0.0.1:8080/", claim_token="my-secret-token")  # noqa: S106
+def test_the_token_carries_the_claim_url_this_aggregator_answers_on() -> None:
+    setup_token = build_setup_token("http://127.0.0.1:8080", CLAIM_SECRET)
 
-    setup_token = build_setup_token(config)
-
-    decoded = base64.b64decode(setup_token, validate=True).decode("ascii")
-    assert decoded == "http://127.0.0.1:8080/simplefin/claim/my-secret-token"
+    assert _claim_url(setup_token) == f"http://127.0.0.1:8080/simplefin/claim/{CLAIM_SECRET}"
 
 
-def test_build_setup_token_uses_base_url_scheme_and_host() -> None:
-    config = make_config(base_url="https://aggregator.example.com", claim_token="tok")  # noqa: S106
+def test_a_base_url_ending_in_a_slash_names_the_same_claim_url() -> None:
+    setup_token = build_setup_token("http://127.0.0.1:8080/", CLAIM_SECRET)
 
-    setup_token = build_setup_token(config)
+    assert _claim_url(setup_token) == f"http://127.0.0.1:8080/simplefin/claim/{CLAIM_SECRET}"
 
-    decoded = base64.b64decode(setup_token, validate=True).decode("ascii")
-    assert decoded == "https://aggregator.example.com/simplefin/claim/tok"
+
+def test_the_claim_url_keeps_the_base_url_scheme_and_host() -> None:
+    setup_token = build_setup_token("https://aggregator.example.com", CLAIM_SECRET)
+
+    assert (
+        _claim_url(setup_token) == f"https://aggregator.example.com/simplefin/claim/{CLAIM_SECRET}"
+    )

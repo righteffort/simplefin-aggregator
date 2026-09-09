@@ -3,7 +3,7 @@
 `.invalid` (RFC 2606) is reserved and guaranteed never to resolve, so it is
 safe as a stand-in provider host with no risk of a real lookup.
 
-Cases marked "behaviour, not a requirement" pin what the module does today in
+Cases marked "behavior, not a requirement" pin what the module does today in
 a situation where doing something else would be at least as correct -- an input it
 declines to normalize, or a gap it deliberately leaves open. A future
 implementation may change them; they are here so that such a change shows up
@@ -540,7 +540,7 @@ def test_rejected_url_message_does_not_quote_the_password(raw: str) -> None:
 # Characters a URL may not carry literally, which are percent-encoded rather
 # than rejected. The requirement is only that the result is safe to print --
 # see test_accepted_urls_render_as_printable_ascii; the exact encoding is
-# httpx2's, so these expectations are behaviour, not a requirement.
+# httpx2's, so these expectations are behavior, not a requirement.
 PERCENT_ENCODED_URLS = [
     ("https://simplefin.invalid/simplefin/tok with space", "/simplefin/tok%20with%20space"),
     ("https://simplefin.invalid/simplefin/café", "/simplefin/caf%C3%A9"),

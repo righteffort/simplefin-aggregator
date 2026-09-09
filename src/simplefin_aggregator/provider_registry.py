@@ -36,7 +36,11 @@ class ProviderRegistryError(ValueError):
     """
 
 
-_KEY_PATTERN = re.compile(r"[a-z0-9-]+")
+KEY_PATTERN = re.compile(r"[a-z0-9-]+")
+"""What a key may look like, for a provider here and for a client app.
+
+Both name a record in a store keyed by it and both are typed on a command
+line, so they get one constraint rather than two that could drift."""
 
 
 @dataclass(frozen=True)
@@ -54,8 +58,8 @@ class ProviderEntry:
         # Every entry is built through here, config-supplied ones included, so
         # this is the one place the store's keys and the claim menu's
         # selectors are constrained.
-        if not _KEY_PATTERN.fullmatch(self.key):
-            msg = f"provider key {self.key!a} must match {_KEY_PATTERN.pattern}"
+        if not KEY_PATTERN.fullmatch(self.key):
+            msg = f"provider key {self.key!a} must match {KEY_PATTERN.pattern}"
             raise ProviderRegistryError(msg)
 
 

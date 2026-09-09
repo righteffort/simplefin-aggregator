@@ -34,18 +34,24 @@ warning category does not license the next one.
   validates cached bytecode by source size and mtime-in-seconds, so a
   same-length mutation restored within the same second can leave the mutant's
   bytecode in place and report a false pass.
-- **A test states required behaviour, never that the implementation matches
+- **Then check the assertion is answered by what the test set up.** Mutating
+  the code will not find a test that passes for the wrong reason: that test
+  still passes when the code is mutated, which is how it went unnoticed.
+  Mutate what its premise rests on instead — for example, by weakening a
+  compound constraint one clause at a time, replacing a setup step with a
+  no-op, or deleting the operation whose failure the test is about.
+- **A test states required behavior, never that the implementation matches
   its dependency.** Name no library in a test's name, docstring or comments,
   and never assert on a library's own output. Write the expectation as a rule
   about the domain — "the scheme's default port names the same origin as no
   port at all", not "httpx2 drops it". A dependency's quirk belongs in a
   comment at the call site that relies on it.
-- **Say which tests pin a requirement and which pin current behaviour** — an
+- **Say which tests pin a requirement and which pin current behavior** — an
   input the code declines to normalize, a gap left open on purpose — so a
   later change knows whether altering one is allowed or a regression.
 - **Never make a real outbound network call**, in the suite or in a manual
   check, even where the sandbox would allow it. Use loopback fakes or a mock
-  transport. `scripts/manual_verify.sh` is the one deliberate exception: it is
+  transport. `scripts/manual_verify.py` is the one deliberate exception: it is
   human-run, and stays that way.
 - **Index a leak corpus by misparse shape, not by syntactic position.** A
   marked secret placed where a password belongs does not exercise the case
@@ -74,16 +80,32 @@ path that handles a credential, add it there too.
 - **Size a comment to the code it explains, and open by naming its subject.**
   Long rationale is welcome where a reader would otherwise re-litigate a
   decision; a two-line helper does not need a five-paragraph justification.
-- **No rejected alternatives and no reviewer dialogue.** State what the code
-  does and why it is right. A comment written to pre-empt an objection is
-  addressed to someone who will never read it, and a "we considered X"
-  narrative is history the next reader did not ask for. A review finding's
-  disposition belongs in the reply to the reviewer and, if it changed the
-  design, in the commit message. Never hedge a deliberate improvement as a
-  concession.
+- **Write for a reader who has only the file, not its history.** They cannot
+  see what the code was, what else was considered, or what a reviewer said, so
+  a comment leaning on any of it explains nothing to them. Tense is the
+  checkable symptom: "now", "no longer", "any more", "used to", "instead of"
+  all mean the sentence is addressed to someone watching a diff. Rejected
+  alternatives and reviewer dialogue are the same mistake wearing different
+  clothes — state what the code does and why it is right, and never hedge a
+  deliberate improvement as a concession. The history has a home: the commit
+  message, and for a finding's disposition, the reply to the reviewer. This
+  governs `docs/` too. `docs/ARCHITECTURE.md` is a map of what is.
 - **Commit messages are for someone in `git log` asking why the code looks
   like this.** Lead with the point, organize by topic, and rewrite from the
   current state rather than appending each round's news.
+
+## Writing things down
+
+What you learn while working changes the work that is left, and the
+conversation you learned it in will not be there when that work starts. Write
+it where the work will look: a decision about the task in the task's own
+prompt, a rule about working here in this file, a fact about the code in the
+code or in `docs/ARCHITECTURE.md`. Amending the prompt is expected rather than
+presumptuous — a brief that a decision has overtaken is worse than no brief,
+because it still gets followed.
+
+"I will keep that in mind for the next step" is not a plan. It is the moment to
+stop and write it down.
 
 ## Working in steps
 
@@ -95,13 +117,25 @@ once per exchange with the user.
 
 Each step ends with this cycle:
 
-1. **Present the work to the user, then stop.** This is a gate, not a
+1. **Self-review before presenting for human or agentic review.** Read your
+   change in the context of the existing codebase, not against what you meant
+   to write. For each delta, check whether its behavior differs from similar
+   existing code — if it does, decide whether that is intended or a defect,
+   and leave a test that pins it either way. When the change routes a new kind
+   of value through shared code that guarantees something — a loader, a
+   validator, an error path — re-check the guarantee against the new kind,
+   since the existing tests only cover the kinds that predate your change.
+   Check each delta against the rules in two documents, the task's prompt and
+   `docs/ARCHITECTURE.md`. If there is a contradiction between the code and
+   either document, then either the document is stale or the code is
+   incorrect; fix whichever it is.
+2. **Present the work to the user, then stop.** This is a gate, not a
    courtesy: end the turn and wait for a reply. Their review routinely changes
    scope or direction, so a review launched first is spent on a version that
    is about to change — and AI reviewers are a rationed resource. A turn that
    presents work and then keeps working has not stopped, whatever it said
    while presenting.
-2. **Have the step's diff reviewed by two independent AI reviewers**, both of
+3. **Have the step's diff reviewed by two independent AI reviewers**, both of
    them given the range and not the tip commit — asked to review "commit X" a
    tool may review that commit rather than the range ending at it. Commit
    first: both read committed code, so an uncommitted fix is reviewed as the
@@ -138,15 +172,19 @@ Each step ends with this cycle:
    proposing SSRF defenses every round. Extend the out-of-scope list when a
    round produces a finding it should have pre-empted.
 
+   The CodeRabbit CLI has a small per-window quota, and a step that goes
+   several rounds will exhaust it. Wait the window out — queue the run and do
+   something else — rather than shipping a step one reviewer short.
+
    Give a reviewer the *whole* brief as context, not just the step's
    paragraph. Three reviewers independently reported the same stale
    `ARCHITECTURE.md` because none of them had the sentence saying a later step
    fixes it.
-3. **Account for every finding**, one line each: what was claimed, whether it
+4. **Account for every finding**, one line each: what was claimed, whether it
    is true, and fixed / rejected-with-reason / deferred. Verify a finding
    against the code before acting on it or relaying it — confident-but-wrong
    findings are common, from both reviewers. Never quietly drop one.
-4. **Give each reviewer a chance to answer a rejection**, put back to the
+5. **Give each reviewer a chance to answer a rejection**, put back to the
    reviewer that raised it so it keeps the context of its own finding: re-run
    the CLI with the rebuttal supplied via `-c` — the one place that flag
    belongs, since here you *want* the argument in front of it — and reply to
@@ -155,7 +193,7 @@ Each step ends with this cycle:
    accompli. One that concedes was wrong; one that holds its position with a
    new argument may be right, so read it before deciding. Report the exchange,
    not just the original verdict.
-5. **Present the fixes and rejections to the user, and stop again** — with the
+6. **Present the fixes and rejections to the user, and stop again** — with the
    review delta as something reviewable. The disposition list says what you
    claim changed; the diff says what did. `git diff <pre-review> <current>` is
    the minimum; better is a commit whose parent is the pre-review state and
@@ -168,7 +206,7 @@ Each step ends with this cycle:
 
    Keep the pre-review commit reachable from a tag or branch until sign-off —
    `git reset --soft` leaves it findable only through the reflog.
-6. **Squash into one commit after sign-off**, with a message describing the
+7. **Squash into one commit after sign-off**, with a message describing the
    step rather than the review rounds. Squashing belongs to the user's reply,
    not to your own judgment that every finding is handled.
 
@@ -179,7 +217,7 @@ Each step ends with this cycle:
   provider, write "client app".
 - **The client app is generic.** Actual Budget is the motivating example, not
   a dependency and not a special case — never bake it into naming, logic, or
-  assumptions about client behaviour.
+  assumptions about client behavior.
 - **"a provider the built-in list does not name"**, not "a self-hosted
   provider", for a config-supplied entry. Self-hosting is only one reason an
   entry is missing; a real third-party provider that is simply not built in is
@@ -196,6 +234,10 @@ Each step ends with this cycle:
   when someone else owns the file is fine here. Where a check would need more
   machinery than the code it checks, state the intent in a comment and leave it
   untested; a one-keyword fix does not earn a subprocess harness.
+- **A property held by construction beats one held by discipline.** A store
+  that keeps only digests cannot print a credential, so no rule about printing
+  has to be remembered or enforced. Where the choice exists, arrange for there
+  to be nothing to get wrong.
 - **A rule with a stated limit beats a rule defended by machinery.** Where
   holding a property absolutely would cost real complexity, take the simpler
   code and document the gap where a reader will meet it.
@@ -203,3 +245,7 @@ Each step ends with this cycle:
   the belief forms; executing it against a loopback fake is what settles it.
   This applies to a reviewer's reproduction too — verify the repro, not just
   the conclusion.
+
+## Conventions
+
+- Use American English spellings, not British English.
