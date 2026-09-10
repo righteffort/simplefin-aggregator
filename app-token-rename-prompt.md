@@ -65,7 +65,8 @@ rather than retitle; the module map, the on-disk-state table, the `app
 new` and claim flows, and the secrets section all refer to these types
 in prose. Pay special attention to follow the rules in `AGENTS.md` to
 say what each thing is, not how it differs from something else, and
-write for a reader who has the file and not its history.
+write for a reader who has the file and not its history. Finally, remove the
+corresponding bullet from `TODO.md`.
 
 ## Steps
 
