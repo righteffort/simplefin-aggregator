@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import httpx2
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from simplefin_aggregator import cli
@@ -36,12 +37,6 @@ MENU_CHOICE = str(len(KNOWN_PROVIDERS) + 1)
 
 CONFIG_TOML = f"""
 base_url = "http://127.0.0.1:9999"
-claim_token = "claim-token"
-
-[client]
-username = "client-username"
-password = "s3cret-client-password"
-
 [[custom_providers]]
 key = "{PROVIDER_KEY}"
 label = "{PROVIDER_LABEL}"
@@ -88,11 +83,26 @@ def _responds(
 
 
 def _run_claim(
-    tmp_path: Path, *args: str, config: str = CONFIG_TOML, choice: str = MENU_CHOICE
+    tmp_path: Path,
+    token: str = SETUP_TOKEN,
+    *,
+    config: str = CONFIG_TOML,
+    choice: str = MENU_CHOICE,
 ) -> Result:
+    """Invoke `claim` through the provider menu, then feed it the token."""
     _ = _write_config(tmp_path, config)
     return runner.invoke(
-        cli.app, ["claim", *args, "--config-dir", str(tmp_path)], input=f"{choice}\n"
+        cli.app, ["claim", "--config-dir", str(tmp_path)], input=f"{choice}\n{token}\n"
+    )
+
+
+def _run_claim_with_provider(tmp_path: Path, provider: str, token: str = SETUP_TOKEN) -> Result:
+    """Invoke `claim --provider`, which skips the menu, then feed it the token."""
+    _ = _write_config(tmp_path, CONFIG_TOML)
+    return runner.invoke(
+        cli.app,
+        ["claim", "--provider", provider, "--config-dir", str(tmp_path)],
+        input=f"{token}\n",
     )
 
 
@@ -138,18 +148,49 @@ def test_claim_offers_the_built_in_providers_alongside_the_configured_one(tmp_pa
     assert f"{PROVIDER_LABEL} ({PROVIDER_ROOT}/)" in result.stdout
 
 
-def test_claim_prompts_for_the_token_when_it_is_not_given_as_an_argument(
-    tmp_path: Path, claim_succeeds: list[str]
+@pytest.mark.usefixtures("claim_succeeds")
+def test_claim_does_not_echo_the_token_typed_at_a_real_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _ = _write_config(tmp_path)
+    """The prompt hides what is typed when stdin is a real terminal.
 
-    result = runner.invoke(
-        cli.app, ["claim", "--config-dir", str(tmp_path)], input=f"{MENU_CHOICE}\n{SETUP_TOKEN}\n"
-    )
+    CliRunner's stdin is never a real terminal, so the check is faked here to
+    exercise that branch.
+    """
+    monkeypatch.setattr(cli, "_stdin_is_a_terminal", lambda: True)
+
+    result = _run_claim(tmp_path)
 
     assert result.exit_code == 0
+    assert SETUP_TOKEN not in result.output
+
+
+def test_claim_does_not_hide_the_token_when_stdin_is_not_a_terminal(
+    tmp_path: Path, claim_succeeds: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hiding unconditionally would break reading the token from a redirected file.
+
+    Checked against the prompt call itself, not echoed output: CliRunner's
+    stand-in for a visible (non-hidden) prompt echoes unconditionally to let
+    tests see it, but a real terminal's own line discipline is what would
+    actually echo a typed value, and there is no terminal here to reproduce
+    that distinction. (Confirmed by hand: reading via plain `input()` from a
+    redirected file, as this branch does, prints only the prompt text, never
+    the value -- so there is nothing for a real run to leak either way.)
+    """
+    hide_input_seen: list[bool] = []
+
+    def fake_prompt(_text: str, *, hide_input: bool = False) -> str:
+        hide_input_seen.append(hide_input)
+        return SETUP_TOKEN
+
+    monkeypatch.setattr(typer, "prompt", fake_prompt)
+
+    result = _run_claim_with_provider(tmp_path, PROVIDER_KEY)
+
+    assert result.exit_code == 0
+    assert hide_input_seen == [False]
     assert claim_succeeds == [CLAIM_URL]
-    assert _stored(tmp_path) == {PROVIDER_KEY: ACCESS_URL}
 
 
 @pytest.mark.usefixtures("claim_succeeds")
@@ -203,9 +244,7 @@ def test_claim_fails_on_an_unwritable_config_directory_before_spending_the_token
     # the writability check that has to catch this.
     config_dir.chmod(0o500)
 
-    result = runner.invoke(
-        cli.app, ["claim", SETUP_TOKEN, "--config-dir", str(config_dir)], input=f"{MENU_CHOICE}\n"
-    )
+    result = runner.invoke(cli.app, ["claim", "--config-dir", str(config_dir)])
 
     assert result.exit_code == 1
     assert claim_succeeds == []
@@ -259,8 +298,13 @@ def test_claim_with_invalid_base64_fails(tmp_path: Path, claim_succeeds: list[st
 def test_claim_accepts_a_token_that_strict_base64_would_reject(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
-    """Matching the reference implementation's plain b64decode, which ignores stray characters."""
-    result = _run_claim(tmp_path, f"{SETUP_TOKEN[:8]}\n{SETUP_TOKEN[8:]}")
+    """Matching the reference implementation's plain b64decode, which ignores stray characters.
+
+    A space rather than a newline: the token arrives as one line read from
+    stdin, and a newline embedded in it is not something a real paste can
+    produce.
+    """
+    result = _run_claim(tmp_path, f"{SETUP_TOKEN[:8]} {SETUP_TOKEN[8:]}")
 
     assert result.exit_code == 0
     assert claim_succeeds == [CLAIM_URL]
@@ -390,3 +434,38 @@ def test_claim_client_does_not_follow_redirects() -> None:
     # setting the CLI actually runs with.
     with cli._build_claim_client() as claim_client:  # pyright: ignore[reportPrivateUsage]
         assert claim_client.follow_redirects is False
+
+
+def test_naming_the_provider_skips_the_menu(tmp_path: Path, claim_succeeds: list[str]) -> None:
+    """`--provider` is as deliberate an answer as choosing from the menu."""
+    result = _run_claim_with_provider(tmp_path, PROVIDER_KEY)
+
+    assert result.exit_code == 0
+    assert "Which provider" not in result.stdout
+    assert _stored(tmp_path) == {PROVIDER_KEY: ACCESS_URL}
+    assert claim_succeeds == [CLAIM_URL]
+
+
+def test_a_provider_no_entry_defines_is_refused_before_the_token_is_spent(
+    tmp_path: Path, claim_succeeds: list[str]
+) -> None:
+    result = _run_claim_with_provider(tmp_path, "not-a-provider")
+
+    assert result.exit_code == 1
+    # Named as the reason: a key that resolved to the wrong provider would
+    # also stop here, on the root the setup token fails to match.
+    assert "unknown provider" in result.stderr
+    assert claim_succeeds == []
+    assert _stored(tmp_path) == {}
+
+
+def test_a_provider_key_that_is_a_pasted_secret_does_not_come_back_on_stderr(
+    tmp_path: Path, claim_succeeds: list[str]
+) -> None:
+    """A mistyped `--provider` is as likely to be a pasted setup token as `--key` is."""
+    result = _run_claim_with_provider(tmp_path, SETUP_TOKEN)
+
+    assert result.exit_code == 1
+    assert SETUP_TOKEN not in result.stderr
+    assert SETUP_TOKEN not in result.stdout
+    assert claim_succeeds == []

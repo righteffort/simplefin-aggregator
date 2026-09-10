@@ -18,7 +18,7 @@ reviews:
         and sends Basic Auth credentials to the attacker on every sync. The
         only control that works is exact matching of provider URLs against a
         fixed set of known-good origins (url_validation.py,
-        provider_allowlist.py).
+        provider_registry.py).
 
         Out of scope. Do not report these -- they address a different threat
         model and will be rejected:
@@ -67,6 +67,6 @@ reviews:
 
     - path: "docs/**"
       instructions: |
-        docs/ARCHITECTURE.md is knowingly stale for the in-progress provider
-        allowlist work and is scheduled to be rewritten as a later step. Report
-        a documentation mismatch there only once, as a single finding.
+        docs/ARCHITECTURE.md is meant to describe the code as it is. Report
+        anything it claims that the code does not do, and anything the code
+        does that it does not mention.

@@ -1,42 +1,39 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pydantic import SecretStr
 
 from simplefin_aggregator.access_url import build_access_url
-
-from .support import make_config
-
-
-if TYPE_CHECKING:
-    from simplefin_aggregator.config import Config
+from simplefin_aggregator.app_tokens import ClientCredentials
 
 
-def _config(base_url: str, username: str = "client-username", password: str = "s3cret") -> Config:  # noqa: S107
-    return make_config(base_url=base_url, username=username, password=password)
+def _credentials(username: str = "the-username", password: str = "s3cret") -> ClientCredentials:  # noqa: S107
+    return ClientCredentials(SecretStr(username), SecretStr(password))
 
 
-def test_build_access_url_embeds_client_credentials_and_simplefin_path() -> None:
-    config = _config("http://127.0.0.1:8080")
+def test_the_access_url_carries_the_credentials_and_the_simplefin_path() -> None:
+    url = build_access_url("http://127.0.0.1:8080", _credentials())
 
-    assert build_access_url(config) == "http://client-username:s3cret@127.0.0.1:8080/simplefin"
-
-
-def test_build_access_url_percent_encodes_special_characters_in_credentials() -> None:
-    config = _config("http://127.0.0.1:8080", username="user@name", password="p@ss:word")  # noqa: S106
-
-    assert build_access_url(config) == "http://user%40name:p%40ss%3Aword@127.0.0.1:8080/simplefin"
+    assert url == "http://the-username:s3cret@127.0.0.1:8080/simplefin"
 
 
-def test_build_access_url_strips_trailing_slash_from_base_url_path() -> None:
-    config = _config("http://127.0.0.1:8080/")
+def test_a_character_that_would_change_the_url_is_encoded() -> None:
+    """Pins a requirement, not the generator: whatever mints a credential, the URL parses.
 
-    assert build_access_url(config) == "http://client-username:s3cret@127.0.0.1:8080/simplefin"
+    Nothing this application generates contains these characters, which is
+    exactly why the encoding has to be checked rather than assumed away.
+    """
+    url = build_access_url("http://127.0.0.1:8080", _credentials("user@name", "p@ss:word"))
+
+    assert url == "http://user%40name:p%40ss%3Aword@127.0.0.1:8080/simplefin"
 
 
-def test_build_access_url_uses_base_url_scheme() -> None:
-    config = _config("https://aggregator.example.com")
+def test_a_base_url_ending_in_a_slash_gives_the_same_access_url() -> None:
+    url = build_access_url("http://127.0.0.1:8080/", _credentials())
 
-    assert (
-        build_access_url(config)
-        == "https://client-username:s3cret@aggregator.example.com/simplefin"
-    )
+    assert url == "http://the-username:s3cret@127.0.0.1:8080/simplefin"
+
+
+def test_the_access_url_keeps_the_base_url_scheme() -> None:
+    url = build_access_url("https://aggregator.example.com", _credentials())
+
+    assert url == "https://the-username:s3cret@aggregator.example.com/simplefin"

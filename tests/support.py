@@ -8,11 +8,18 @@ import httpx2
 from pydantic import SecretStr
 
 from simplefin_aggregator.app import _AppState, create_app  # pyright: ignore[reportPrivateUsage]
+from simplefin_aggregator.app_tokens import (
+    app_tokens_path,
+    claim_app_token,
+    new_app_token,
+    update_app_tokens,
+)
 from simplefin_aggregator.config import Config
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Mapping
+    from pathlib import Path
 
     from fastapi import FastAPI
 
@@ -29,11 +36,17 @@ PROVIDER_ACCESS_URL = "https://user:pass@provider.example.com/simplefin"
 
 
 def install_provider_transport(app: FastAPI, key: str, handler: MockHandler) -> None:
-    """Swap a provider's real AsyncClient for one backed by a MockTransport.
+    """Replace a provider's AsyncClient with one backed by a MockTransport.
 
     Must be called after the app's lifespan has started (e.g. inside a
     `with TestClient(app) as client:` block), since that's what creates
     app.state.provider_clients in the first place.
+
+    The replacement is built here rather than derived from the real one, so it
+    carries none of `build_provider_client`'s configuration -- no `auth=`, and
+    a `base_url` that never held credentials. A test asserting where
+    credentials end up passes vacuously against this. Give it a real socket
+    instead, the way `_loopback_provider` does.
     """
     state = cast(_AppState, app.state.app_state)
     state.provider_clients[key] = httpx2.AsyncClient(
@@ -43,25 +56,38 @@ def install_provider_transport(app: FastAPI, key: str, handler: MockHandler) -> 
     )
 
 
-def make_config(  # noqa: PLR0913
-    *,
-    base_url: str = "http://127.0.0.1:8080",
-    claim_token: str = "the-claim-token",  # noqa: S107
-    username: str = "client-username",
-    password: str = "s3cret-password",  # noqa: S107
-    key: str = PROVIDER_KEY,
-    root: str = PROVIDER_ROOT,
+def make_config(
+    *, base_url: str = "http://127.0.0.1:8080", key: str = PROVIDER_KEY, root: str = PROVIDER_ROOT
 ) -> Config:
     """Build a Config the same way load_config does: from an untyped dict."""
     return Config.model_validate(
         {
             "base_url": base_url,
-            "claim_token": claim_token,
-            "client": {"username": username, "password": password},
             "providers": [{"key": key}],
             "custom_providers": [{"key": key, "label": "Test Provider", "root": root}],
         }
     )
+
+
+def make_claimed_app(
+    config_dir: Path, key: str = "test-app", label: str = "Test App"
+) -> tuple[str, str]:
+    """Put one app that has already claimed into the store.
+
+    Returns what it authenticates with, which exists nowhere else: the store
+    keeps only digests of it.
+    """
+    with update_app_tokens(app_tokens_path(config_dir)) as apps:
+        _, unclaimed = new_app_token(label)
+        credentials, apps[key] = claim_app_token(unclaimed)
+    return credentials.username.get_secret_value(), credentials.password.get_secret_value()
+
+
+def make_unclaimed_app(config_dir: Path, key: str = "test-app", label: str = "Test App") -> str:
+    """Put one app with an unspent setup token into the store, returning that secret."""
+    with update_app_tokens(app_tokens_path(config_dir)) as apps:
+        secret, apps[key] = new_app_token(label)
+    return secret
 
 
 def make_access_urls(
@@ -72,10 +98,18 @@ def make_access_urls(
 
 
 def make_app(
-    config: Config | None = None, access_urls: Mapping[str, SecretStr] | None = None
+    config_dir: Path,
+    config: Config | None = None,
+    access_urls: Mapping[str, SecretStr] | None = None,
 ) -> FastAPI:
-    """create_app with the shared test config and its one claimed provider."""
+    """create_app with the shared test config, its one claimed provider, and a store.
+
+    The store is named rather than passed, because the server reads it per
+    request: a test that revokes an app mid-run writes the file and the next
+    request sees it.
+    """
     return create_app(
         config if config is not None else make_config(),
         access_urls if access_urls is not None else make_access_urls(),
+        app_tokens_path(config_dir),
     )

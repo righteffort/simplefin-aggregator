@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING
 
+import pytest
+from pydantic import SecretStr
 from typer.testing import CliRunner
 
 from simplefin_aggregator import cli
 from simplefin_aggregator.app import CLAIM_PATH_PREFIX
+from simplefin_aggregator.app_tokens import app_tokens_path
 from simplefin_aggregator.provider_access_urls import provider_creds_path, save_access_url
+
+from .support import make_claimed_app
 
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 runner = CliRunner()
@@ -22,11 +26,6 @@ VALID_TOML = """
 bind_host = "127.0.0.2"
 bind_port = 9998
 base_url = "http://127.0.0.1:9999"
-claim_token = "claim-token"
-
-[client]
-username = "client-username"
-password = "s3cret-password"
 
 [[custom_providers]]
 key = "my-bank"
@@ -50,13 +49,22 @@ def _write_config(tmp_path: Path, contents: str) -> Path:
 
 def _claim(tmp_path: Path, access_url: str = ACCESS_URL) -> None:
     """Put an access URL in the store, as `claim` would have."""
-    save_access_url(provider_creds_path(tmp_path), "my-bank", access_url)
+    save_access_url(provider_creds_path(tmp_path), "my-bank", SecretStr(access_url))
 
 
 def _serve_args(tmp_path: Path) -> list[str]:
     # --config-dir is never omitted in tests: without it serve would read the
     # developer's own config and credentials.
     return ["serve", "--config-dir", str(tmp_path)]
+
+
+def _record_start(monkeypatch: pytest.MonkeyPatch, started: list[object]) -> None:
+    """Stand in for uvicorn, recording whether the server would have come up."""
+
+    def fake_run(app: object, **_kwargs: object) -> None:
+        started.append(app)
+
+    monkeypatch.setattr(cli.uvicorn, "run", fake_run)  # pyright: ignore[reportPrivateLocalImportUsage]
 
 
 def test_serve_runs_uvicorn_with_configured_bind_address(
@@ -187,3 +195,65 @@ def test_serve_fails_on_a_malformed_access_url_store(
     assert result.exit_code == 1
     assert calls == []
     assert "malformed JSON" in result.stderr
+
+
+def test_serve_starts_with_no_apps_yet_and_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The legitimate state between installing the server and issuing the first token.
+
+    A failure here would make the order of two setup steps load-bearing for no
+    reason; the server runs and refuses every request until an app claims.
+    """
+    _ = _write_config(tmp_path, VALID_TOML)
+    _claim(tmp_path)
+    started: list[object] = []
+    _record_start(monkeypatch, started)
+
+    result = runner.invoke(cli.app, _serve_args(tmp_path))
+
+    assert result.exit_code == 0
+    assert len(started) == 1
+    assert "no client apps yet" in result.stderr
+
+
+def test_serve_refuses_to_start_on_a_malformed_app_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Found before uvicorn binds, not by the first client app that tries to authenticate."""
+    _ = _write_config(tmp_path, VALID_TOML)
+    _claim(tmp_path)
+    _ = app_tokens_path(tmp_path).write_text("{not json")
+    started: list[object] = []
+    _record_start(monkeypatch, started)
+
+    result = runner.invoke(cli.app, _serve_args(tmp_path))
+
+    assert result.exit_code == 1
+    assert started == []
+    assert "malformed JSON" in result.stderr
+
+
+@pytest.mark.skipif(
+    os.name == "posix" and os.geteuid() == 0,
+    reason="root writes a directory whatever its mode says",
+)
+def test_serve_refuses_to_start_when_it_could_not_record_a_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The server writes the store on every claim, so a read-only directory loses them."""
+    _ = _write_config(tmp_path, VALID_TOML)
+    _claim(tmp_path)
+    _ = make_claimed_app(tmp_path)
+    started: list[object] = []
+    _record_start(monkeypatch, started)
+    tmp_path.chmod(0o500)
+
+    try:
+        result = runner.invoke(cli.app, _serve_args(tmp_path))
+    finally:
+        tmp_path.chmod(0o700)
+
+    assert result.exit_code == 1
+    assert started == []
+    assert "not writable" in result.stderr

@@ -32,15 +32,17 @@ codebase than the proxying does.
 
 | File | Responsibility |
 |---|---|
-| `cli.py` | Typer entry points: `claim`, `gen-token`, `serve`, each taking `--config-dir`. Wires everything else together. `main()` is the `console_scripts` target. |
-| `config.py` | Pydantic models (`Config`, `Provider`, `CustomProvider`, `ClientAuth`), `load_config()`, and where the config directory lives. All config validation lives here. |
+| `cli.py` | Typer entry points: `claim`, `serve`, and the `app` group (`new`, `list`, `revoke`, `regen`), each taking `--config-dir`. Wires everything else together. `main()` is the `console_scripts` target. |
+| `config.py` | Pydantic models (`Config`, `Provider`, `CustomProvider`), `load_config()`, and where the config directory lives. All config validation lives here. Holds no credentials. |
+| `state_file.py` | Everything this application does with a file it owns: the permission warning, the redacted validation-error rendering, the atomic 0600 write, the sidecar `flock`, and the locked read-modify-write. Imports nothing else in the package — `config.py` takes its warning and its error rendering from here, not the other way around. |
+| `app_tokens.py` | The app token store: the two-state record, the digest helpers, and the constructors that mint a setup token and spend one for credentials. |
 | `provider_registry.py` | `ProviderEntry` and `KNOWN_PROVIDERS`: the fixed set of providers a setup token may be claimed from, plus `merged_providers`/`find_provider`. Must not import `config.py` — config imports it. |
 | `url_validation.py` | `NormalizedUrl`, `parse_url`/`parse_root`, `validate_claim_url`/`validate_access_url`, `UrlValidationError`. The phishing defense; read its module docstring before touching anything here. |
-| `provider_access_urls.py` | The `provider_creds.json` store: provider key → access URL, loaded/saved with 0600 and a permission warning. |
-| `app.py` | `create_app(config, access_urls) -> FastAPI`: the ASGI app factory, lifespan, and all three HTTP routes. |
-| `auth.py` | `require_client_auth`, the FastAPI dependency guarding `/simplefin/accounts`. |
+| `provider_access_urls.py` | The `provider_creds.json` store: provider key → access URL. Schema and semantics only; the file handling is `state_file.py`'s. |
+| `app.py` | `create_app(config, access_urls, app_tokens_path) -> FastAPI`: the ASGI app factory, lifespan, and all three HTTP routes. |
+| `auth.py` | `build_client_auth_dependency(store_path)`, the factory for the FastAPI dependency guarding `/simplefin/accounts`. |
 | `access_url.py` | Builds the access URL this aggregator hands back from `POST /simplefin/claim/{token}` — the one it *issues*, not the ones it holds (that is `provider_access_urls.py`). |
-| `setup_token.py` | Builds the base64 setup token `gen-token` prints (the inverse direction of `access_url.py`: this aggregator's *own* claim URL, encoded the way a real provider's would be). |
+| `setup_token.py` | Builds the base64 setup token `app new` prints (the inverse direction of `access_url.py`: this aggregator's *own* claim URL, encoded the way a real provider's would be). |
 | `provider_clients.py` | `build_provider_client(access_url) -> httpx2.AsyncClient`: one long-lived client per provider, built once at startup. |
 | `transport.py` | `fetch`/`fetch_all`: the concurrent, non-raising provider-request layer. |
 | `provider_response.py` | `ProviderSuccess` / `ProviderFailure` / `ProviderResponse` — the uniform result type `fetch` always returns. |
@@ -56,28 +58,55 @@ test files.
 
 ## On-disk state
 
-Two files, both in the directory `--config-dir` selects for every subcommand,
-defaulting to `platformdirs.user_config_dir("simplefin-aggregator")`:
+Three files, plus a lock sidecar per store, all in the directory
+`--config-dir` selects for every subcommand, defaulting to
+`platformdirs.user_config_dir("simplefin-aggregator")`:
 
 | File | Written by | Holds |
 |---|---|---|
-| `config.toml` | the user, by hand | `claim_token`, `client.password`, provider keys, `custom_providers` |
+| `config.toml` | the user, by hand | bind address, `base_url`, provider keys, `custom_providers` |
 | `provider_creds.json` | `claim` | provider key → provider access URL |
+| `aggregator_creds.json` | `app new`/`revoke`/`regen`, and the claim route | app key → an unclaimed or claimed app token record, digests only |
 
-`provider_creds.json` is the most sensitive thing this app owns and **nothing
-regenerates it**: a setup token is one-time-use, so a lost entry costs the user
-a fresh token from the provider. That is the constraint behind the store's
-0600-and-atomic-write handling; never write code that treats an entry as safe
-to discard.
+**The three want different things, and the difference is load-bearing.**
 
-`config.toml` still holds credentials of its own — `claim_token` and
-`client.password` together let any local user read the user's bank data through
-the loopback endpoint — so `warn_if_permissive` (warn on stderr, don't block)
-runs on both files.
+`provider_creds.json` is the most sensitive thing this application owns.
+An access URL embeds Basic Auth credentials for the user's bank data, so
+anything that can read this file can read that data.
 
-The store is keyed by provider key because that is the one identifier
+`aggregator_creds.json` has no confidentiality concern at all, by
+construction. Every value in it is a SHA-256 digest of a 256-bit random
+secret, kept to recognise that secret and never to reproduce it, so reading
+the file yields nothing an attacker can present to anything. That is what
+makes "never display or log a credential" a property of the design rather
+than a rule to follow. The file is disposable too: losing it costs one fresh
+setup token per client app.
+
+Its integrity does matter — a digest of the attacker's choosing, written into
+it, authenticates them to `/accounts` — but only to someone who can write the
+config directory, and this application warns about that rather than defending
+against it.
+
+`config.toml` holds no credentials. `bind_host` decides whether the server is
+reachable from off this machine, and nothing enforces a choice there; the
+README says what each one means.
+
+So: modification matters for all three, disclosure only for the first.
+`warn_if_permissive` (warn on stderr, never block) runs on all three and does
+not say which risk applies to the file in hand — a flag on the check, or a
+warning hedging about which case it is in, would be more machinery than the
+asymmetry is worth. It runs on the config *directory* too, from
+`check_can_save`: a directory another local user can write is the premise of
+every attack the write path defends against.
+
+It does not run on the `.lock` sidecars, which hold nothing.
+
+The provider store is keyed by provider key because that is the one identifier
 `config.toml` and the store share; neither file has to name the other.
-Consequence: two accounts at the same provider would collide on one key.
+Consequence: two accounts at the same provider would collide on one key. The
+app token store is keyed by the `--key` its command was given, constrained to
+`[a-z0-9-]+` at the command and again in the model, so what `app list` prints
+is what this application could have written.
 
 ## Key data structures
 
@@ -89,9 +118,7 @@ Config
   bind_port: int = 8080
   providers: list[Provider]           # Field(min_length=1, max_length=1) -- exactly one, for now
   custom_providers: list[CustomProvider] = []
-  client: ClientAuth
-  claim_token: SecretStr              # validated: non-empty, URL-path-safe (quote(x, safe="") == x)
-  base_url: str                       # validated: http/https, has a host, no user-info,
+  base_url: str                       # validated: ASCII, http/https, has a host, no user-info,
                                       #   http only for a literal loopback IP
   .provider_entries() -> tuple[ProviderEntry, ...]   # KNOWN_PROVIDERS + custom_providers
 
@@ -102,11 +129,17 @@ CustomProvider
   key: str
   label: str
   root: str                           # validated via parse_root()
-
-ClientAuth
-  username: str
-  password: SecretStr
 ```
+
+`base_url` must be ASCII because a URL is: an internationalized host appears in
+one as punycode, not as the characters it is spelled with. The provider path
+gets that conversion free — `parse_root` reads `raw_host` off httpx2's parser,
+which has already encoded it — while `base_url` goes through `urlsplit`, which
+normalizes nothing and hands back whatever it was given. So the requirement
+falls on the input, and it is checked at load time rather than where
+`build_setup_token` would hit it, because `app new` writes its record before it
+prints and a failure there would leave an app that could never be handed a
+token.
 
 A `Provider` is now just a reference: no `name`, and no `access_url` (that
 moved to the store). `key` is the identifier everywhere — the store's key, the
@@ -119,22 +152,87 @@ parsed during validation, so a broken one fails at `claim` time rather than
 surviving to `serve`.
 
 **A `Config` is read-only once `load_config` returns**, and there is no config
-hot-reload — nothing mutates one, nothing rebinds `app.state.config`, and
-`serve` reads both `config.toml` and the store exactly once at startup. That is
-what lets validators here establish invariants good for the object's whole
-lifetime.
+hot-reload — nothing mutates one, nothing reloads one, and `serve` reads
+`config.toml` and `provider_creds.json` exactly once at startup. That is what
+lets validators here establish invariants good for the object's whole lifetime;
+a reload would cost that.
+
+**`aggregator_creds.json` is live state: read afresh on every request that
+authenticates, and written on every claim.** That is the whole of what makes
+`app revoke` take effect without a restart. Do not add a cache, an mtime check
+or a reload signal to it.
 
 `providers` is deliberately still a `list` (not a single `Provider` field) even
 though exactly one is enforced — that's the seam for the multi-provider
-version. All secrets are `pydantic.SecretStr`, which redacts itself in
-`repr()`/`str()` by construction, not by convention.
+version.
 
 **`load_config(path) -> Config`** reads TOML, warns if the file is
 group/other-accessible, and validates via `Config.model_validate(dict)`. Its
-error path never `str()`s the `ValidationError` — see "Cross-cutting: secrets
-and logging". Any new validator added to `Config`/`Provider`/`ClientAuth` gets
-that redaction for free; don't bypass it by catching and re-stringifying the
-raw `ValidationError` elsewhere.
+error path never `str()`s the `ValidationError`, and renders it through
+`state_file.py`'s `describe_validation_failure` — the same rendering the state
+files get, for the same reason: a `custom_providers` root can carry userinfo.
+See "Cross-cutting: secrets and logging". Don't bypass it by catching and
+re-stringifying the raw `ValidationError` elsewhere.
+
+### `CustomProvider` (`config.py`)
+
+The model a user hand-edits into `custom_providers` for a provider the
+built-in list does not name. Its `@field_validator("root")` runs
+`parse_root()` and reports a bad root against that one field, rather than
+leaving it to the model-level check to reject the whole `Config` — so the
+error names the offending entry instead of, via pydantic's default
+`ValidationError` rendering, the entire file. `as_provider_entry()` converts
+one into a `ProviderEntry`, validating both `key` and `root` again in the
+process; `provider_entries()` merges the result into `KNOWN_PROVIDERS`
+through `merged_providers`, which rejects a duplicate key rather than letting
+a custom entry shadow or collide with a built-in one.
+
+### `UnclaimedAppToken` / `ClaimedAppToken` (`app_tokens.py`)
+
+```text
+UnclaimedAppToken                     # a setup token issued and not yet spent
+  status: Literal["unclaimed"]
+  label: str
+  created_at: AwareDatetime
+  claim_token_sha256: _Sha256Hex
+
+ClaimedAppToken                       # what a claim exchanged it for
+  status: Literal["claimed"]
+  label: str
+  created_at: AwareDatetime
+  claimed_at: AwareDatetime
+  username_sha256: _Sha256Hex
+  password_sha256: _Sha256Hex
+
+AppTokenRecord = Annotated[UnclaimedAppToken | ClaimedAppToken, Field(discriminator="status")]
+```
+
+An app token record is one client app's row in `aggregator_creds.json`, in one
+of two states: `UnclaimedAppToken`, holding the digest of a setup token that
+has not been spent, or `ClaimedAppToken`, holding the digests of the Basic
+Auth credentials a claim exchanged it for. Neither variant literally holds a
+token — the claimed one holds no token at all — but "app token" names the
+record, not its payload, so the variant names track the `status` values
+they discriminate on rather than what each one contains.
+
+Two states and no third, narrowed by `isinstance` the way `ProviderSuccess |
+ProviderFailure` is. **A claim replaces the unclaimed record rather than
+marking it spent**, which is what makes a replayed setup token fail the same
+lookup an unissued one fails — the protocol's indistinguishability requirement,
+obtained by construction instead of defended by a branch. It is also why
+`app regen` cannot leave an app holding live credentials and an unspent token
+at once.
+
+Nothing in these models is a `SecretStr`, because nothing in them is a secret.
+`_Sha256Hex` and `AwareDatetime` exist for the same reason: a value this
+application could not have written is rejected when the file is read, rather
+than at the comparison or the subtraction it would later break.
+
+`new_app_token` and `claim_app_token` are the only ways to build a record.
+They mint the secret and return it once alongside the record that will
+recognise it, which keeps the timestamp and the digesting out of `cli.py` and
+the claim route — the two places where assembling a record by hand would put
+a plaintext credential on disk.
 
 ### `ProviderEntry` (`provider_registry.py`)
 
@@ -225,11 +323,11 @@ context manager, read via `_get_app_state(request)` which does the one
 new piece of request-scoped shared state means adding a field here, not a new
 `app.state.whatever`.
 
-`app.state.config` is a **separate**, second thing stored directly (not inside
-`_AppState`) — because `auth.py`'s `require_client_auth` lives in a different
-module and isn't nested inside `create_app`, so it has no closure over
-`config` the way the route handlers do. It reads `request.app.state.config`
-instead, with its own `cast(Config, ...)`.
+It is the only one, and the way to keep it that way is that a dependency
+needing something from `create_app` takes it as a factory argument:
+`build_client_auth_dependency(store_path)` closes over the path, so `auth.py`
+reads no attribute and casts nothing, even though it lives in another module
+and has no closure over `create_app`'s locals.
 
 ## Provider URL validation
 
@@ -257,7 +355,7 @@ codebase:
   a secret" policy working as intended; and a URL malformed enough that the
   parse misreads where its credentials end can put a fragment of one in
   `origin`. `UrlValidationError`'s docstring states both, and the tests pinning
-  them say they pin behaviour rather than a requirement. Both are accepted in
+  them say they pin behavior rather than a requirement. Both are accepted in
   preference to the checks that would close them.
 
 ## Request/command flows
@@ -267,8 +365,11 @@ codebase:
 ```text
 cli.serve
   -> _load_config_or_exit(config_path(dir))   # load_config, or print+exit 1
+  -> _check_app_store_or_exit(dir)            # store parses, directory writable
+                                              #   empty store -> warn, not fail
   -> load_access_urls(provider_creds_path(dir))
-  -> create_app(config, access_urls)          # validates every stored access URL, see below
+  -> create_app(config, access_urls, app_tokens_path(dir))
+                                              # validates every stored access URL, see below
   -> install_access_log_redaction(...)        # generic filter, told about CLAIM_PATH_PREFIX
   -> uvicorn.run(app, host, port)
        -> lifespan startup: build_provider_client() per provider -> _AppState on app.state
@@ -284,14 +385,24 @@ URL was claimed from one specific provider, so that is the root it must still
 match. All of it happens before uvicorn starts, so a config change that
 invalidates a stored URL fails at startup, not on the first request.
 
-### CLI `claim [TOKEN] [--config-dir DIR]` (claiming from a *real* provider)
+The app token store is checked at startup but **not read into the app**: the
+server reads it on every authenticated request and writes it on every claim, so
+what `serve` establishes is that the file parses and its directory can be
+written — a store it cannot parse would answer 403 to everything and a
+directory it cannot write would lose every claim. An empty store is a warning
+rather than a failure: it is the legitimate state between installing the server
+and issuing the first app its token.
+
+### CLI `claim [--provider KEY] [--config-dir DIR]` (claiming from a *real* provider)
 
 ```text
 cli.claim
   -> _load_config_or_exit(...)                # claim needs a fully valid config, like serve
   -> load_access_urls(...) + check_can_save(...)   # BEFORE the token is spent
-  -> _select_provider(config.provider_entries())   # numbered menu; no default, no free-text host
-  -> token from argv, else prompt
+  -> _resolve_provider(config.provider_entries(), provider)
+       --provider given -> _check_key + find_provider    # named, so exact; never fuzzy
+       otherwise        -> numbered menu; no default, no free-text host
+  -> prompt for the token, hidden if stdin is a real terminal
   -> _decode_setup_token  -> validate_claim_url(entry.root, ...)   # BEFORE any network call
   -> POST claim_url.origin_and_path, redirects disabled
        - 403      -> "may be compromised, revoke it at the provider"
@@ -301,14 +412,24 @@ cli.claim
   -> warn if no [[providers]] entry names this key
 ```
 
-Four orderings in there are load-bearing:
+One property and four orderings in there are load-bearing.
 
-1. **The store is read and its directory checked before the POST.** The token
+The property: **the provider is named or chosen, never defaulted.** Which root
+the token is matched against is the whole of the phishing defense, so it is the
+user's deliberate answer either way — `--provider` on the command line is as
+deliberate as picking from the menu, and an unknown key is an error rather than
+a guess. A `--provider` failing the key pattern is rejected without being
+echoed, for the reason `--key` is: a mistyped one is most often a pasted setup
+token.
+
+The orderings:
+
+1. **The provider is settled before the token is read.** Otherwise the root a
+   token is matched against could be inferred from the token, which is the one
+   thing that must not decide it.
+2. **The store is read and its directory checked before the POST.** The token
    is one-time-use, so a file problem discovered afterwards is a lost
    credential rather than a retry.
-2. **The menu comes before the token.** Which root the token is matched
-   against is the whole of the defense, so it is the user's deliberate answer,
-   never a default and never inferred from the token.
 3. **Validation comes before the POST.** A hostile host you contact has
    already learned your egress IP and that the token is live, however you treat
    its reply.
@@ -323,32 +444,66 @@ as unclaimed later.
 This sync `httpx2.Client` is the one legitimate non-async HTTP call in the
 project.
 
-### CLI `gen-token` (the inverse: building *this aggregator's own* setup token)
+### CLI `app new` / `regen` / `revoke` (obtaining/revoking *this aggregator's* tokens)
 
 ```text
-cli.gen_token(config_dir)
-  -> _load_config_or_exit(...)
-  -> build_setup_token(config) -> base64(f"{base_url}/simplefin/claim/{claim_token}")
-  -> print to stdout
+cli.app_new(key, label, config_dir)
+  -> _load_config_or_exit(...)                  # for base_url
+  -> _check_key(key)                            # rejected keys are never named back
+  -> _writable_store_or_exit(config_dir)        # directory writable, and warn if shared
+  -> update_app_tokens(store):                  # one locked read-modify-write
+       key already present -> exit 1, naming `app regen`, store untouched
+       else -> new_app_token(label) -> (secret, UnclaimedAppToken)
+  -> build_setup_token(base_url, secret) -> stdout, alone
+  -> "shown once" note -> stderr
 ```
+
+Three orderings here are load-bearing. The duplicate check is *inside* the
+lock, or it answers from a version another writer is already replacing. The
+token is printed *after* the store is written, because a token this aggregator
+has no record of looks to the user like a working setup that never syncs. And
+a rejected `--key` is not echoed, because a mistyped one is most often a
+pasted setup token and base64 is exactly what `[a-z0-9-]+` rejects.
+
+`app regen` is the same flow over an existing record, keeping only the label.
+`app revoke` deletes the record outright. Neither leaves an app holding a live
+credential and an unspent token at once, which is what would make "revoked"
+mean two things.
 
 ### `POST /simplefin/claim/{token}`
 
 ```text
 app.claim(token)
-  -> secrets.compare_digest(token, config.claim_token)   # constant-time; config is closure, not app.state
-  -> 403 if mismatch
-  -> else: build_access_url(config) -> 200 text/plain, no trailing newline
+  -> run_in_threadpool(_spend_setup_token, store_path, token)   # no file I/O on the event loop
+       update_app_tokens(store):                                 # one locked read-modify-write
+         find the UnclaimedAppToken whose digest matches (compare_digest)
+         none -> raise _UnknownSetupTokenError, out of the update, nothing written
+         else -> claim_app_token(record) -> (credentials, ClaimedAppToken); replaces the record
+  -> _UnknownSetupTokenError -> 403 "unknown claim token"
+  -> StateFileError          -> 500, and no access URL
+  -> else: build_access_url(base_url, credentials) -> 200 text/plain, no trailing newline
 ```
 
-Stateless and repeatable by design — see "Deliberate deviations" below.
-`config` here is the `create_app` closure variable, not read from `app.state`.
+**Persist, then respond.** Crashing after the write costs a setup token the
+operator replaces with `app regen`; crashing after the response leaves the
+client app holding credentials this server does not recognise. The
+write-then-rename and its `fsync` are what make "persisted" mean survived a
+power cut, not merely reached the page cache — which is why the write stays in
+the request path.
+
+**A replayed token and one that was never issued are answered identically, by
+construction rather than by a branch.** The claim replaces the record it spent,
+so there is nothing left that answers to a spent token; both fail the same
+lookup and there is no code that could tell them apart.
 
 ### `GET /simplefin/accounts` (and `/simplefin/info`, minus the auth/filtering)
 
 ```text
 app.accounts(request)
-  -> require_client_auth (FastAPI dependency; 403 on bad/missing Basic Auth)
+  -> require_client_auth (dependency built over the store path by
+     build_client_auth_dependency; reads aggregator_creds.json in a threadpool on
+     every request, 403 on missing, unknown or unreadable; 403 also on a
+     record that has not claimed, which holds a token and not credentials)
   -> _get_app_state(request) -> provider_clients, request_counter
   -> _forwarded_accounts_params(request)
        - keep only the six spec'd query keys (ACCOUNTS_FORWARDED_PARAMS)
@@ -400,28 +555,87 @@ same `502` and SimpleFIN-shaped error body it gets for an unreachable provider.
   `fetch()` calls, but simple dict increments with no `await` in between are
   safe under asyncio's single-threaded cooperative model.
 
+### Writing a state file
+
+A store is written whole, so changing one entry means reading the rest first,
+and two writers doing that at once each save a version missing what the other
+did. Four writers can: `app new`, `app revoke`, `app regen`, and the server's
+claim handler — and `claim` for the other store, where a lost update means an
+access URL whose one-time setup token has already been spent.
+
+- **Writers take an exclusive `fcntl.flock`**, held across the whole
+  read-modify-write. `update_state_file` is the only way to write either store,
+  so there is no path that can forget it.
+- **The lock is a sidecar** (`provider_creds.lock`, `aggregator_creds.lock`), never
+  the store itself: the atomic write replaces the store, so a lock held on its
+  inode stops guarding the file that ends up at that path.
+- **Readers take no lock and need none.** The write-then-rename means a reader
+  sees one whole version or another, never a torn one.
+- **The lock is not reentrant and has no timeout.** A second update on the same
+  path from inside the body blocks on the first forever, silently. Compose two
+  changes by making them in one block, never by nesting.
+- **`fcntl` is POSIX-only**, as this application already is throughout its mode
+  bits and its Dockerfile. There is no Windows fallback and there must be no
+  silent no-op one, which would drop the guarantee callers take from this.
+- **No file I/O on the event loop.** The claim handler's locked update and the
+  auth path's read both go through `starlette.concurrency.run_in_threadpool`,
+  because both can block: the read on the disk, the update on the lock.
+
+An attacker who can write the config directory defeats the lock — they can
+replace the sidecar between two writers' opens, and `flock` is on an inode.
+That is not a hole to plug: the same access lets them rewrite the store
+outright, which is easier and worse. The lock serializes this application's own
+writers; it is not a security boundary, and no `flock`-based one could be.
+
 ## Cross-cutting: secrets and logging
 
-Four distinct places have had to actively defend against leaking secrets; know
-all four before touching anything credential-adjacent:
+**Two postures, and the first is much the safer.** A defense that *removes* the
+secret leaves nothing to leak and no rule for anyone to follow: the digest-only
+app token store and `SecretStr` are of that kind. A defense that keeps the
+secret and handles it carefully — the right flags on an open, an error message
+built to exclude its input, a credential carried between two representations —
+depends on every future caller getting it right. Reach for the first when the
+choice is available; when it is not, the list below is what has to be
+remembered.
 
-1. **`SecretStr`** on every credential-bearing config field and on every stored
-   access URL — redacts in `repr()`/`str()` automatically. The store's
+Five distinct places actively defend against leaking secrets; know all five
+before touching anything credential-adjacent:
+
+1. **`SecretStr`** on every stored access URL and on the credentials one claim
+   issues — redacts in `repr()`/`str()` automatically. The access URL store's
    `field_serializer` reveals the real values for the JSON file and nowhere
-   else.
-2. **The `ValidationError` paths** in `load_config` and `load_access_urls` —
-   never `str()` a `ValidationError` directly (see `config.py` above);
-   pydantic's default rendering embeds the raw rejected input. For the same
-   reason, neither reports the offending byte from a `UnicodeDecodeError`.
-3. **uvicorn's own access logger** — bypasses application-level logging
+   else. Nothing in `config.toml` needs wrapping: it holds no credential.
+2. **Digests, not plaintext, in `aggregator_creds.json`.** Every secret that
+   file concerns is verified and never reproduced: the setup token against
+   what was pasted, the credentials against what the client app sends, and the
+   access URL is the client app's to keep. So `app list` cannot print a
+   credential and a stray `repr` cannot either — not because they are careful
+   but because there is nothing there. Plain SHA-256 and no KDF: these are
+   256-bit random values, not chosen passwords, and there is no dictionary to
+   search.
+3. **The `ValidationError` path** in `state_file.py`, which `load_config` and
+   both stores share — never `str()` a `ValidationError` directly; pydantic's
+   default rendering embeds the raw rejected input. The rendering is a
+   *safelist*: it reads pydantic's message only for `value_error` and
+   `assertion_error`, whose text this project wrote, and otherwise reads the
+   failure's type, a fixed slug with nothing of the file in it. That is
+   deliberate rather than an enumeration of dangerous cases — subtracting the
+   bad parts from a message built out of file contents meant every model shape
+   added later was another chance to subtract the wrong set, which is exactly
+   how a discriminated union's tag once reached stderr. A location is rendered
+   from field names and list indices only, never mapping keys, which come from
+   the file. `tests/test_state_file.py` pins the property across a corpus
+   indexed by misparse shape. For the same reason none of these paths reports
+   the offending byte from a `UnicodeDecodeError`.
+4. **uvicorn's own access logger** — bypasses application-level logging
    entirely. `access_log.py` + the `CLAIM_PATH_PREFIX`-based wiring in
-   `cli.py`/`app.py` exists because uvicorn was printing the raw
-   `claim_token` to stdout on every `POST /simplefin/claim/{token}`,
-   independent of anything the app itself logs. If a future route ever
-   embeds a credential in its path, it needs the same treatment; if it only
-   sends credentials via headers (like Basic Auth today), it doesn't need
-   any redaction since uvicorn's access log never includes headers.
-4. **The stored provider access URL**, the most sensitive value in the system.
+   `cli.py`/`app.py` exists because uvicorn was printing the raw setup token to
+   stdout on every `POST /simplefin/claim/{token}`, independent of anything the
+   app itself logs. If a future route ever embeds a credential in its path, it
+   needs the same treatment; if it only sends credentials via headers (like
+   Basic Auth today), it doesn't need any redaction since uvicorn's access log
+   never includes headers.
+5. **The stored provider access URL**, the most sensitive value in the system.
    It reaches a message only as `NormalizedUrl.origin` or `origin_and_path`,
    never as the raw string — and the same rule covers the setup token, whose
    live, unclaimed value is the *path* of a claim URL. `cli.py` therefore
@@ -429,6 +643,13 @@ all four before touching anything credential-adjacent:
    itself; that message is deliberately built for display, and its docstring
    says what it guarantees and where the guarantee stops. Provider response
    bodies are attacker-influenced and are never echoed either.
+
+A sixth rule has no single home because it applies at every command boundary:
+**a value the user typed is not safe to echo just because they typed it.** A
+mistyped `--key` is most often a pasted setup token, so `_check_key` rejects it
+without naming it, and `claim` declines to quote a setup token it could not
+decode. Repeating the value would put a secret on stderr in order to tell the
+user something they already know.
 
 **Credentials reach a provider only through `auth=`, never through a URL.**
 That is what makes the two places that render a dependency's own error text
@@ -443,22 +664,32 @@ compromise both messages.
 - **Fakes over mocks.** `httpx2.MockTransport` fakes provider HTTP calls;
   `FastAPI.TestClient` drives real ASGI request/response cycles including the
   lifespan; `typer.testing.CliRunner` drives `claim`'s menu and token prompts
-  via `input=`. No `unittest.mock` beyond `monkeypatch`, no `respx` (dropped
-  when the project migrated from `httpx` to `httpx2` — respx doesn't support
-  `httpx2`).
-- **No real network in the automated suite.** The one place that *does* hit a
-  real network — `scripts/manual_verify.sh` against the live SimpleFIN demo
-  bridge — is separate, human-run, and documented as such in the README.
+  via `input=`; `_loopback_provider` serves one over a real socket. No
+  `unittest.mock` beyond `monkeypatch`, no `respx` (dropped when the project
+  migrated from `httpx` to `httpx2` — respx doesn't support `httpx2`).
+- **No traffic leaves the machine in the automated suite.** One test binds a
+  socket: `_loopback_provider` in `tests/test_accounts_endpoint.py` answers
+  from `127.0.0.1`. It asserts that credentials stay out of the outbound URL,
+  and a `MockTransport` cannot carry that — installing one replaces the client
+  `build_provider_client` returned, discarding the `base_url`/`auth=` split
+  that is the thing under test. Loopback is still the network stack; what the
+  suite never does is address a host off this machine. The one place that does
+  — `scripts/manual_verify.py` against the live SimpleFIN demo bridge — is
+  separate, human-run, and documented as such in the README.
 - **`tests/support.py`** holds the shared fixtures: `make_config` builds a
   `Config` through `model_validate(dict)`, the same path `load_config` uses
   (direct kwargs trip up basedpyright on `SecretStr` fields);
-  `make_access_urls`/`make_app` supply the app's second constructor argument;
+  `make_access_urls`/`make_app` supply `create_app`'s other arguments, and
+  `make_app` takes a config *directory* so that a test can revoke an app
+  mid-run and have the next request see it; `make_claimed_app` and
+  `make_unclaimed_app` put a record in the store and hand back the one thing
+  the store does not keep — the credentials, or the setup token secret;
   `install_provider_transport` swaps in a `MockTransport`-backed client, with
   an ordering constraint its docstring explains. The fixture provider is a
   `custom_providers` entry, so most tests exercise the config-supplied path
   rather than a built-in root.
 - Tests are labelled to say whether they pin a *requirement* or *current
-  behaviour*; `AGENTS.md` has the rule.
+  behavior*; `AGENTS.md` has the rule.
 - Reaching into `app.py`'s private `_AppState` from test code is accepted
   (`tests/support.py` imports it with a `# pyright: ignore[reportPrivateUsage]`)
   — it's the established pattern for tests that need to touch internal wiring.
@@ -472,10 +703,10 @@ compromise both messages.
 
 ## Deliberate deviations from the SimpleFIN spec
 
-- **Repeatable claim.** `POST /simplefin/claim/{token}` is stateless and
-  accepts the same constant `claim_token` indefinitely, rather than the
-  spec's one-time-claim rule. Documented in the README with rationale
-  (loopback-only deployment).
+- **No `GET /create`.** The browser flow a real provider offers for minting a
+  setup token is not implemented; `app new` is this application's equivalent,
+  which is the right shape for a single-user server on loopback. The README is
+  a guide to what *is* implemented and does not discuss the absence.
 - **The access URL must share the claim URL's provider root.** The spec leaves
   that open; see "Provider URL validation".
 
@@ -517,21 +748,21 @@ these are where it goes — nowhere else should need to change:
   even though production config only ever has one today
   (`tests/test_transport.py`).
 
-Note that `README.md` and `config.example.toml` already describe the
-multi-provider behaviour, showing several `[[providers]]` entries, while the
-code accepts exactly one. That gap is intentional; don't "fix" the docs to
-match the code.
+Note that `README.md` already describes the multi-provider behavior, showing
+two `[[providers]]` entries, while the code accepts exactly one. That gap is
+intentional; don't "fix" the docs to match the code. `config.toml` ships with a
+single entry, because it is a file the user copies and edits rather than an
+illustration.
 
 ## Known planned future work
 
-`TODO.md` is the running list. Check it before assuming any behaviour
-documented above is permanent — some of what is on it would change the
-repeatable-claim deviation and what `config.toml` has to hold.
+`TODO.md` is the running list. Check it before assuming any behavior
+documented above is permanent.
 
 ## Stack notes
 
-FastAPI, uvicorn, httpx2. Pydantic v2 for config models and the access URL
-store. Typer for the CLI. `platformdirs` for the config directory. `uv` for
+FastAPI, uvicorn, httpx2. Pydantic v2 for config models and both on-disk
+stores. Typer for the CLI. `platformdirs` for the config directory. `uv` for
 packaging/dependency management. `ruff` (full `ALL` ruleset with ignore list)
 and `basedpyright` ("recommended" mode, zero-warning policy) for static checks.
 `pyproject.toml` is the source of truth for versions; keep `ruff`'s

@@ -17,11 +17,6 @@ VALID_TOML = """
 bind_host = "127.0.0.2"
 bind_port = 9999
 base_url = "http://127.0.0.1:8080"
-claim_token = "s3cret-claim-token"
-
-[client]
-username = "client-username"
-password = "s3cret-password"
 
 # Before [[providers]] so that a test can cut the providers off the end.
 [[custom_providers]]
@@ -71,7 +66,6 @@ def test_load_config_parses_valid_file(tmp_path: Path) -> None:
     assert config.bind_port == 9999  # noqa: PLR2004
     assert len(config.providers) == 1
     assert config.providers[0].key == "my-bank"
-    assert config.client.username == "client-username"
 
 
 def test_load_config_accepts_http_base_url_on_loopback_ipv6(tmp_path: Path) -> None:
@@ -126,6 +120,17 @@ def test_load_config_rejects_base_url_with_userinfo(tmp_path: Path) -> None:
         _ = load_config(path)
 
 
+def test_load_config_rejects_a_base_url_no_setup_token_could_carry(tmp_path: Path) -> None:
+    """A setup token embeds this URL as ASCII, so a host outside it never works."""
+    bad_toml = VALID_TOML.replace(
+        'base_url = "http://127.0.0.1:8080"', 'base_url = "https://ex\u00e4mple.test"'
+    )
+    path = _write(tmp_path, bad_toml)
+
+    with pytest.raises(ConfigError, match="ASCII"):
+        _ = load_config(path)
+
+
 def test_load_config_rejects_base_url_with_username_only(tmp_path: Path) -> None:
     bad_toml = VALID_TOML.replace(
         'base_url = "http://127.0.0.1:8080"', 'base_url = "http://olduser@127.0.0.1:8080"'
@@ -134,47 +139,6 @@ def test_load_config_rejects_base_url_with_username_only(tmp_path: Path) -> None
 
     with pytest.raises(ConfigError, match="base_url"):
         _ = load_config(path)
-
-
-def test_load_config_rejects_claim_token_with_slash(tmp_path: Path) -> None:
-    bad_toml = VALID_TOML.replace(
-        'claim_token = "s3cret-claim-token"', 'claim_token = "s3cret/claim/token"'
-    )
-    path = _write(tmp_path, bad_toml)
-
-    with pytest.raises(ConfigError, match="claim_token"):
-        _ = load_config(path)
-
-
-def test_load_config_error_does_not_leak_rejected_claim_token_value(tmp_path: Path) -> None:
-    bad_toml = VALID_TOML.replace(
-        'claim_token = "s3cret-claim-token"', 'claim_token = "s3cret/claim/token"'
-    )
-    path = _write(tmp_path, bad_toml)
-
-    with pytest.raises(ConfigError) as exc_info:
-        _ = load_config(path)
-
-    assert "s3cret/claim/token" not in str(exc_info.value)
-
-
-def test_load_config_rejects_empty_claim_token(tmp_path: Path) -> None:
-    bad_toml = VALID_TOML.replace('claim_token = "s3cret-claim-token"', 'claim_token = ""')
-    path = _write(tmp_path, bad_toml)
-
-    with pytest.raises(ConfigError, match="claim_token"):
-        _ = load_config(path)
-
-
-def test_load_config_accepts_url_safe_claim_token_characters(tmp_path: Path) -> None:
-    ok_toml = VALID_TOML.replace(
-        'claim_token = "s3cret-claim-token"', 'claim_token = "abc123._~-XYZ"'
-    )
-    path = _write(tmp_path, ok_toml)
-
-    config = load_config(path)
-
-    assert config.claim_token.get_secret_value() == "abc123._~-XYZ"
 
 
 def test_load_config_rejects_malformed_toml(tmp_path: Path) -> None:
@@ -233,13 +197,22 @@ def test_load_config_does_not_warn_on_owner_only_file_mode(
     assert capsys.readouterr().err == ""
 
 
-def test_secrets_are_redacted_in_repr(tmp_path: Path) -> None:
-    path = _write(tmp_path, VALID_TOML)
+def test_the_config_holds_no_credential_to_redact(tmp_path: Path) -> None:
+    """Pins a requirement: nothing in this file is a secret any more.
 
-    config = load_config(path)
+    The client app's credentials and the claim token used to live here. They
+    are digests in the app token store now, so the whole config is safe to
+    render.
+    """
+    config = load_config(_write(tmp_path, VALID_TOML))
 
-    assert "s3cret-claim-token" not in repr(config)
-    assert "s3cret-password" not in repr(config)
+    assert set(type(config).model_fields) == {
+        "bind_host",
+        "bind_port",
+        "providers",
+        "custom_providers",
+        "base_url",
+    }
 
 
 def test_provider_entries_are_the_built_in_ones_plus_the_config_s(tmp_path: Path) -> None:
@@ -321,7 +294,9 @@ def test_rejected_custom_provider_root_error_does_not_quote_the_credentials(tmp_
     assert "leak-username" not in message
     assert "leak-password" not in message
     # Named as a fault of the entry, so a config with several says which one.
-    assert "custom_providers.0.root" in message
+    # The field within it is not named: a location is rendered from the
+    # top-level model's fields alone, and `root` belongs to the nested one.
+    assert "custom_providers.0" in message
 
 
 def test_load_config_accepts_a_loopback_http_custom_provider_root(tmp_path: Path) -> None:
