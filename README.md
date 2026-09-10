@@ -191,7 +191,8 @@ install a digest of a credential they chose.
     one claim issued; proxies to the configured provider, forwarding
     `start-date`, `end-date`, `pending`, `account` (repeatable),
     `balances-only`, and `version` verbatim.
-  - `GET /simplefin/info` — proxies the provider's response; no auth required.
+  - `GET /simplefin/info` — answers `{"versions": ["1.0"]}`, the protocol
+    version supported by this aggregator for its clients; no auth required.
 
 A provider error (any non-2xx) is passed through with the same status and
 body. A provider that's unreachable (DNS failure, connection refused, timeout)

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from .access_url import build_access_url
@@ -43,6 +43,9 @@ if TYPE_CHECKING:
 ACCOUNTS_FORWARDED_PARAMS = frozenset(
     {"start-date", "end-date", "pending", "account", "balances-only", "version"}
 )
+
+# The protocol version this application supports for clients.
+PROTOCOL_VERSION = "1.0"
 
 # The path segment before {token}. Also used to redact the claim token from
 # uvicorn's access log (see access_log.py) -- keeping both derived from this
@@ -212,15 +215,8 @@ def create_app(
         )
 
     @app.get("/simplefin/info")
-    async def info(request: Request) -> Response:  # pyright: ignore [reportUnusedFunction]
-        state = _get_app_state(request)
-
-        responses = await fetch_all(
-            state.provider_clients, config.providers, "/info", [], state.request_counter
-        )
-        merged = merge(responses)
-        return Response(
-            content=merged.body, status_code=merged.status, media_type=merged.content_type
-        )
+    async def info() -> JSONResponse:  # pyright: ignore [reportUnusedFunction]
+        """Answer locally: this names the protocol this server speaks, not its providers."""
+        return JSONResponse({"versions": [PROTOCOL_VERSION]})
 
     return app
