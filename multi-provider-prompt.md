@@ -143,13 +143,15 @@ implement, and answering it in v1 anyway would be a silent lie. Forwarding the
 parameter instead would be worse: a provider that honoured it would put v2
 shapes into bodies this code merges as v1.
 
-> **Open question, worth ten minutes before implementing.** `/info` advertises
-> `1.0` while this rule accepts only `1`, so a client that echoes back what
-> `/info` told it gets a 400. Check what the version strings actually look like
-> in practice — the v1 spec does not define the `version` parameter at all, so
-> it comes from v2 — and either accept `1` and `1.0` both, or advertise
-> whichever spelling the parameter uses. Do not ship the two halves
-> disagreeing.
+**Settled: accept `1` and `1.0`, and advertise `1.0`.** Read out of the two
+published specs. v1 defines no `version` parameter and its `/info` example is
+`{"versions": ["1.0"]}`. v2 introduces the parameter as a *major-version
+prefix* — "Must be `2` for this version of the protocol. Can be `1` for earlier
+versions" — and describes `/info`'s array as "version string prefixes", its own
+example being `["1","2"]`. So `1` and `1.0` are two spellings of the one
+version this server speaks, and both are accepted; every other value is the
+400. Nothing longer is: `1.0.7` names a fix release this application makes no
+claim about.
 
 ### Merging responses
 
@@ -357,7 +359,7 @@ This removes the last caller of `merge` that is not `/accounts`.
 - `request_counter.py`, `provider_response.py`: unchanged.
 - `tests/support.py`: `make_config` grows a way to build several providers
   with prefixes; most test files construct configs through it.
-- `config.example.toml` and `README.md`: a worked two-provider example, the
+- `config.toml` and `README.md`: a worked two-provider example, the
   prefix field with its default, and the "set `prefix = \"\"` for the provider
   you already sync from" instruction, which is the one thing an existing user
   must know before upgrading.
@@ -418,6 +420,13 @@ Do not build these.
 Each step is a review-cycle unit as `AGENTS.md` describes, and lands as one
 commit.
 
+**C runs first.** `/info` is a caller of `merge`, and an `/info` body is not an
+accounts body: the moment `merge` enforces the usable/unusable rule below,
+`{"versions": ["1.0"]}` becomes "that provider failed" and `/info` answers with
+an empty account set. Answering `/info` locally is what makes A's claim true
+that only a provider's non-200 changes. So the order is **C, A, B, D1, D2, E**;
+C depends on nothing and A depends on C.
+
 **A. Merge several responses.** Rewrite `merge` and its tests: concatenation,
 prefixing, the deterministic order, the usable/unusable rule, always-200,
 `errlist` deleted. Call sites still pass one response, and `Config` still
@@ -454,7 +463,7 @@ probe.
 **E. Documentation.** 
 - user-facing documentation: `README.md` (the two-provider example,
   prefixes and their permanence, the blank-prefix instruction and its
-  hazard), `config.example.toml`, `scripts/manual_verify.sh`
+  hazard), `config.toml`, `scripts/manual_verify.py`
 - developer-facing: `TODO.md`, and `docs/ARCHITECTURE.md`: the deleted
   and rewritten modules, the id-namespacing scheme, the routing and
   merging rules, the always-200 contract, `/info` answering locally,
