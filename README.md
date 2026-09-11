@@ -91,9 +91,7 @@ depends on, and every command that writes there will warn you about it.
 
 ### 2. Claim a SimpleFIN setup token
 
-Get a one-time-use setup token from your provider (for example,
-`https://beta-bridge.simplefin.org/simplefin/create`, or your own SimpleFIN
-server).
+For each of your providers: Get a one-time-use setup token, then:
 
 ```sh
 uv run simplefin-aggregator claim --provider <key>
@@ -194,11 +192,18 @@ install a digest of a credential they chose.
   - `GET /simplefin/info` — answers `{"versions": ["1.0"]}`, the protocol
     version supported by this aggregator for its clients; no auth required.
 
-A provider error (any non-2xx) is passed through with the same status and
-body. A provider that's unreachable (DNS failure, connection refused, timeout)
-produces a `502` with a JSON body shaped like a SimpleFIN error response, and
-so does a provider that answers with a redirect: redirects are never followed,
-on the claim POST or on `/accounts`.
+`GET /simplefin/accounts` answers `200`, or `403` when the client app's own
+credentials are wrong, and nothing else. A provider that fails — unreachable,
+answering with anything but `200`, sending a body that is not a SimpleFIN
+account set, or answering with a redirect, which is never followed on
+`/accounts` or on the claim POST — contributes no accounts, and the failure is
+logged rather than reported. The `errors` array carries what the providers
+themselves reported.
+
+A provider's own `403` is deliberately not relayed as this server's. `403`
+here tells the client app to re-authenticate with *this* server; a provider's
+`403` says the aggregator's access to that provider was revoked, which is a
+different fact about a different pair of parties.
 
 ## Docker
 

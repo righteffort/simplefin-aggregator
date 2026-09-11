@@ -13,6 +13,8 @@ from simplefin_aggregator import cli
 from simplefin_aggregator.provider_access_urls import load_access_urls, provider_creds_path
 from simplefin_aggregator.provider_registry import KNOWN_PROVIDERS
 
+from .support import echoing_provider
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -96,14 +98,53 @@ def _run_claim(
     )
 
 
-def _run_claim_with_provider(tmp_path: Path, provider: str, token: str = SETUP_TOKEN) -> Result:
+def _run_claim_with_provider(
+    tmp_path: Path, provider: str, token: str = SETUP_TOKEN, *, config: str = CONFIG_TOML
+) -> Result:
     """Invoke `claim --provider`, which skips the menu, then feed it the token."""
-    _ = _write_config(tmp_path, CONFIG_TOML)
+    _ = _write_config(tmp_path, config)
     return runner.invoke(
         cli.app,
         ["claim", "--provider", provider, "--config-dir", str(tmp_path)],
         input=f"{token}\n",
     )
+
+
+def _echo_the_request_path(request_text: str) -> str:
+    """Compose a status line carrying back the path the request was made on.
+
+    The path of a claim URL is the setup token, so this is a provider handing
+    back the one value the command exists to protect.
+    """
+    first_line = request_text.split("\r\n", maxsplit=1)[0].split(" ")
+    path = first_line[1] if len(first_line) > 1 else "no-path-seen"
+    return f"NOT-HTTP {path}"
+
+
+def test_a_provider_cannot_put_a_setup_token_on_the_terminal_by_echoing_it(tmp_path: Path) -> None:
+    """Requirement: nothing a provider puts on the wire is rendered by this command.
+
+    The claim POST's path is the live setup token, so a provider handing that
+    path back is offering the one value this command exists to protect. The
+    token is still unspent when this happens, which is what makes it worth
+    having.
+    """
+    secret_segment = "unspent-setup-token"  # noqa: S105
+    with echoing_provider(_echo_the_request_path) as (port, echoed):
+        root = f"http://127.0.0.1:{port}/simplefin"
+        token = base64.b64encode(f"{root}/claim/{secret_segment}".encode("ascii")).decode("ascii")
+        config = CONFIG_TOML.replace(PROVIDER_ROOT, root)
+        result = _run_claim_with_provider(tmp_path, PROVIDER_KEY, token=token, config=config)
+
+    assert echoed == [f"NOT-HTTP /simplefin/claim/{secret_segment}"], (
+        "the provider did hand the live token back, which is what the rest of this tests"
+    )
+    assert result.exit_code == 1
+    assert "RemoteProtocolError" in result.stderr, (
+        "the operator is told what kind of failure it was"
+    )
+    assert secret_segment not in result.stderr
+    assert secret_segment not in result.stdout
 
 
 def _stored(tmp_path: Path) -> dict[str, str]:

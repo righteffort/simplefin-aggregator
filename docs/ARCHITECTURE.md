@@ -13,12 +13,13 @@ restating it.
 
 A server that speaks the SimpleFIN Bridge protocol to a client app
 (Actual Budget is the motivating example, but it's generic) and proxies one or
-more SimpleFIN providers behind it. The current version is an identity
-function over exactly one provider: provider responses are passed through
-unchanged, while transport failures — and redirects — are normalized to
-generated 502 responses. Every module is already shaped for a future
-multi-provider version that fans out and merges — see "Seams for the
-multi-provider future" below.
+more SimpleFIN providers behind it. `GET /simplefin/accounts` answers 200, or
+403 for a client authentication failure, and nothing else: a provider's own
+failure is reported in v1's `errors` array rather than in this server's status,
+because 403 here is a statement about the client app's credentials and a
+provider's is about a different pair of principals. `Config` still accepts
+exactly one provider — the rest of the multi-provider version is what "Seams
+for the multi-provider future" below describes.
 
 The other half of the job is credential handling. A provider access URL embeds
 Basic Auth credentials for the user's bank data, and it is obtained by pasting
@@ -46,7 +47,7 @@ codebase than the proxying does.
 | `provider_clients.py` | `build_provider_client(access_url) -> httpx2.AsyncClient`: one long-lived client per provider, built once at startup. |
 | `transport.py` | `fetch`/`fetch_all`: the concurrent, non-raising provider-request layer. |
 | `provider_response.py` | `ProviderSuccess` / `ProviderFailure` / `ProviderResponse` — the uniform result type `fetch` always returns. |
-| `merge.py` | `merge(responses) -> MergedResponse`. Single-provider passthrough today; where multi-provider merging will live. |
+| `merge.py` | `merge(results) -> MergedResponse`: several providers' responses concatenated into one v1 body, each account id behind its provider's prefix. |
 | `provider_resolution.py` | `resolve_provider_for_account`: "which provider owns this account id" seam. Trivial today (always the sole provider). |
 | `id_rewriting.py` | `rewrite_ids` / `unrewrite_ids`: no-op seams for future cross-provider id namespacing. |
 | `request_counter.py` | `RequestCounter`: per-provider daily request counts, logged for observability only, never used as a control. |
@@ -285,12 +286,11 @@ credentials, and three rules that are easy to break by accident:
 ```text
 ProviderResponse = ProviderSuccess | ProviderFailure
 
-ProviderSuccess(provider_name, status: int, headers: dict[str, str], body: bytes)
+ProviderSuccess(provider_name, status: int, body: bytes)
   .ok -> True
-  .json -> Any            # lazy; json.loads(body) on access, never called on the passthrough path
 
-ProviderFailure(provider_name, error: str)
-  .ok -> False
+ProviderFailure(provider_name, error: str)   # a class name or this application's own words,
+  .ok -> False                               #   never a provider's text
 ```
 
 This is the uniform type `fetch()` always returns — it never raises. A
@@ -300,15 +300,14 @@ discriminated union of two frozen dataclasses, narrowed via `isinstance` (see
 ### `MergedResponse` (`merge.py`)
 
 ```python
-MergedResponse(status: int, content_type: str, body: bytes)
+MergedResponse(body: bytes)
 ```
 
-The output of `merge(responses: list[ProviderResponse])`. With one response:
-success passes status/content-type/body through byte-for-byte; failure becomes
-`status=502`, a SimpleFIN-shaped JSON body (`{"accounts": [], "errors": [...],
-"errlist": [...]}`). `merge` unpacks `(response,) = responses` — it will raise
-if ever called with a list of any other length, which is intentional today
-(there's no multi-provider merging logic yet; see below).
+The output of `merge(results: Sequence[tuple[str, ProviderResponse]])`, which
+pairs each provider's account-id prefix with its response. One field, because
+the route supplies the other two itself: the status is always 200 and the body
+is always JSON this application built. `merge.py`'s docstrings hold the rest —
+the ordering rule, what makes a response usable, and what a collision costs.
 
 ### `_AppState` (`app.py`, private)
 
@@ -496,7 +495,7 @@ construction rather than by a branch.** The claim replaces the record it spent,
 so there is nothing left that answers to a spent token; both fail the same
 lookup and there is no code that could tell them apart.
 
-### `GET /simplefin/accounts` (and `/simplefin/info`, minus the auth/filtering)
+### `GET /simplefin/accounts`
 
 ```text
 app.accounts(request)
@@ -516,14 +515,20 @@ app.accounts(request)
        -> asyncio.gather over fetch() per provider, order preserved
        -> fetch() never raises: httpx2.HTTPError -> ProviderFailure
        -> 3xx                                    -> ProviderFailure
-  -> merge(responses) -> MergedResponse
+  -> merge([("", response) for response in responses]) -> MergedResponse
   -> rewrite_ids(merged.body)   # no-op today
-  -> Response(body, status, content_type)
+  -> Response(body, 200, "application/json")
 ```
 
-`/simplefin/info` is the same shape minus the client-auth dependency and the
-account-filtering branch (it always queries every configured provider with no
-params).
+The empty prefix is right while `Config` accepts one provider: a lone provider
+needs no namespace, and giving it one would re-identify every account the
+client app already holds.
+
+`GET /simplefin/info` shares none of this. It answers `{"versions": ["1.0"]}`
+locally, contacting no provider: the version is a fact about the protocol this
+server speaks to its client app, and the route is unauthenticated, so proxying
+it would turn one anonymous request into one request per provider against the
+budgets `RequestCounter` exists to watch.
 
 **Redirects are never followed** — not here, and not on the claim POST; the
 `follow_redirects=False` is set explicitly in both clients even though it is
@@ -532,9 +537,8 @@ httpx2's default, so a refactor cannot silently flip it. The spec defines
 redirect, and a `requests`-style silent POST→GET conversion on a 302 is exactly
 what this prevents. With redirects disabled httpx2 *returns* the 3xx rather
 than raising, so `transport.fetch` has to reject it explicitly or it would pass
-through as a `ProviderSuccess`. A 3xx is therefore the one status class not
-covered by the byte-identity pass-through guarantee: the client app sees the
-same `502` and SimpleFIN-shaped error body it gets for an unreachable provider.
+through as a `ProviderSuccess`. A 3xx reaches the client app as that provider
+contributing nothing, the same as any other way of failing.
 
 ## Concurrency model
 
@@ -619,10 +623,9 @@ before touching anything credential-adjacent:
    *safelist*: it reads pydantic's message only for `value_error` and
    `assertion_error`, whose text this project wrote, and otherwise reads the
    failure's type, a fixed slug with nothing of the file in it. That is
-   deliberate rather than an enumeration of dangerous cases — subtracting the
-   bad parts from a message built out of file contents meant every model shape
-   added later was another chance to subtract the wrong set, which is exactly
-   how a discriminated union's tag once reached stderr. A location is rendered
+   deliberate rather than an enumeration of dangerous cases: subtracting the
+   bad parts from a message built out of file contents makes every model shape
+   added later another chance to subtract the wrong set. A location is rendered
    from field names and list indices only, never mapping keys, which come from
    the file. `tests/test_state_file.py` pins the property across a corpus
    indexed by misparse shape. For the same reason none of these paths reports
@@ -642,7 +645,22 @@ before touching anything credential-adjacent:
    prints `UrlValidationError`'s own message and never re-renders the URL
    itself; that message is deliberately built for display, and its docstring
    says what it guarantees and where the guarantee stops. Provider response
-   bodies are attacker-influenced and are never echoed either.
+   bodies are attacker-influenced. None of that text reaches an error message
+   this application writes, and the only provider-derived value that reaches a
+   log line is an account id, in `merge`'s collision warning, rendered with
+   `%r` so that a newline in one cannot forge a log line of its own. What
+   reaches the client app is deliberately much larger: every key inside
+   `accounts` survives the merge, and v1's `errors` strings are relayed
+   verbatim.
+
+**A dependency's own logging is outside all five.** `httpcore2` traces each
+exchange at DEBUG, including the exception it is about to raise, and a protocol
+error's text quotes the status line the provider sent — so a provider that
+echoes back the `Authorization` header it was given puts this aggregator's
+Basic Auth password in a debug log. Nothing here sets a log level, so those
+records reach no one who did not turn DEBUG on themselves. Clamping `httpcore2`
+in `serve` would close it and would also silence an operator who deliberately
+asked for it, so the gap is left open.
 
 A sixth rule has no single home because it applies at every command boundary:
 **a value the user typed is not safe to echo just because they typed it.** A
@@ -652,12 +670,16 @@ decode. Repeating the value would put a secret on stderr in order to tell the
 user something they already know.
 
 **Credentials reach a provider only through `auth=`, never through a URL.**
-That is what makes the two places that render a dependency's own error text
-safe: `transport.fetch`'s `str(exc)`, which becomes the 502 body the client app
-sees, and `claim`'s "could not reach provider". Both describe a request whose
-URL is an `origin_and_path`, so there is no credential in it to leak. Keep it
-that way — putting credentials back into a request URL would silently
-compromise both messages.
+Keep it that way: it is what leaves a request's own URL free of secrets, on
+every path but the claim POST, whose path is the live setup token.
+
+It is not enough by itself, because a provider chooses what a failed exchange
+looks like and httpx2 quotes the wire in the exception it raises. A provider
+that echoes back the `Authorization` header it was given, or the path it was
+called on, puts that value inside a protocol error's text. So a failed request
+is reported by the exception's class and never by its message: `transport.fetch`
+and `cli.claim` both render `type(exc).__name__`, and each has a leak corpus
+entry driving a real socket that hands back what it was sent.
 
 ## Testing conventions
 
@@ -704,9 +726,8 @@ compromise both messages.
 ## Deliberate deviations from the SimpleFIN spec
 
 - **No `GET /create`.** The browser flow a real provider offers for minting a
-  setup token is not implemented; `app new` is this application's equivalent,
-  which is the right shape for a single-user server on loopback. The README is
-  a guide to what *is* implemented and does not discuss the absence.
+  setup token is not implemented; `app new` is this application's equivalent.
+  Precedent: https://beta-bridge.simplefin.org/simplefin/create is unimplemented.
 - **The access URL must share the claim URL's provider root.** The spec leaves
   that open; see "Provider URL validation".
 
@@ -724,10 +745,6 @@ These functions/types are intentionally more general than today's
 single-provider behavior requires. When multi-provider work actually starts,
 these are where it goes — nowhere else should need to change:
 
-- **`merge(responses: list[ProviderResponse])`** — today: `(response,) =
-  responses`, pure passthrough or 502. Multi-provider: combine several
-  `ProviderSuccess`/`ProviderFailure` into one `MergedResponse`, presumably
-  concatenating `accounts` arrays and aggregating `errors`/`errlist`.
 - **`resolve_provider_for_account(account_id, providers)`** — today: asserts
   exactly one provider and returns it, ignoring `account_id` entirely.
   Multi-provider: real id-namespacing-based ownership lookup. It must **never**

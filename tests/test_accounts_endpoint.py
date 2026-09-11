@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from base64 import b64decode
 from contextlib import contextmanager
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,6 +12,7 @@ import httpx2
 from fastapi.testclient import TestClient
 
 from .support import (
+    echoing_provider,
     install_provider_transport,
     make_access_urls,
     make_app,
@@ -36,13 +38,12 @@ def test_accounts_without_basic_auth_is_rejected(tmp_path: Path) -> None:
     assert response.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_accounts_response_body_is_byte_identical_to_provider(tmp_path: Path) -> None:
-    provider_body = b'{"accounts": [{"id": "acc-1", "name": "Checking", "balance": "12.34"}]}'
+def test_accounts_relays_every_key_a_provider_sent_inside_an_account(tmp_path: Path) -> None:
+    """Requirement: this aggregator rebuilds the response, and account contents survive that."""
+    account = {"id": "acc-1", "name": "Checking", "balance": "12.34", "unknown-key": [1, 2]}
 
     async def handler(_request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(
-            HTTPStatus.OK, content=provider_body, headers={"content-type": "application/json"}
-        )
+        return httpx2.Response(HTTPStatus.OK, json={"accounts": [account]})
 
     auth = make_claimed_app(tmp_path)
     app = make_app(tmp_path)
@@ -52,7 +53,7 @@ def test_accounts_response_body_is_byte_identical_to_provider(tmp_path: Path) ->
         response = client.get("/simplefin/accounts", auth=auth)
 
     assert response.status_code == HTTPStatus.OK
-    assert response.content == provider_body
+    assert response.json() == {"accounts": [account], "errors": []}
 
 
 def test_accounts_forwards_repeated_account_params(tmp_path: Path) -> None:
@@ -92,7 +93,13 @@ def test_accounts_only_forwards_allowed_query_params(tmp_path: Path) -> None:
     assert forwarded_keys == {"version"}
 
 
-def test_accounts_provider_403_passes_through(tmp_path: Path) -> None:
+def test_accounts_does_not_relay_a_providers_403_as_its_own(tmp_path: Path) -> None:
+    """Requirement: 403 here is about the client app's credentials, not a provider's.
+
+    Relaying it would tell the client app to re-authenticate against the wrong
+    party -- and there is no answer at all once two providers disagree.
+    """
+
     async def handler(_request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(HTTPStatus.FORBIDDEN, content=b"forbidden by provider")
 
@@ -103,8 +110,10 @@ def test_accounts_provider_403_passes_through(tmp_path: Path) -> None:
         install_provider_transport(app, "my-bank", handler)
         response = client.get("/simplefin/accounts", auth=auth)
 
-    assert response.status_code == HTTPStatus.FORBIDDEN
-    assert response.content == b"forbidden by provider"
+    assert response.status_code == HTTPStatus.OK
+    body = response.json()  # pyright: ignore[reportAny]
+    assert body["accounts"] == []
+    assert b"forbidden by provider" not in response.content
 
 
 def test_accounts_provider_redirect_is_not_relayed_to_the_client_app(tmp_path: Path) -> None:
@@ -120,14 +129,20 @@ def test_accounts_provider_redirect_is_not_relayed_to_the_client_app(tmp_path: P
         install_provider_transport(app, "my-bank", handler)
         response = client.get("/simplefin/accounts", auth=auth, follow_redirects=False)
 
-    assert response.status_code == HTTPStatus.BAD_GATEWAY
+    assert response.status_code == HTTPStatus.OK
     assert "location" not in response.headers
     assert b"attacker.example.net" not in response.content
 
 
-def test_accounts_unreachable_provider_returns_502_with_simplefin_shaped_body(
-    tmp_path: Path,
+def test_accounts_answers_a_v1_body_when_a_provider_is_unreachable(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """Requirement: a dead provider still gets the client app a well-formed v1 response.
+
+    Most client apps stop parsing a body they got with a failing status, so a
+    non-2xx here would cost the user everything the other providers returned.
+    """
+
     async def handler(request: httpx2.Request) -> httpx2.Response:
         msg = "connection refused"
         raise httpx2.ConnectError(msg, request=request)
@@ -135,14 +150,17 @@ def test_accounts_unreachable_provider_returns_502_with_simplefin_shaped_body(
     auth = make_claimed_app(tmp_path)
     app = make_app(tmp_path)
 
-    with TestClient(app) as client:
+    with TestClient(app) as client, caplog.at_level(logging.WARNING):
         install_provider_transport(app, "my-bank", handler)
         response = client.get("/simplefin/accounts", auth=auth)
 
-    assert response.status_code == HTTPStatus.BAD_GATEWAY
-    body = response.json()  # pyright: ignore[reportAny]
-    assert "errlist" in body
-    assert body["errlist"][0]["msg"] == "connection refused"
+    assert response.status_code == HTTPStatus.OK
+    body = cast("dict[str, object]", response.json())
+    assert set(body) == {"accounts", "errors"}, "errlist is a v2 field this application never emits"
+    assert body["accounts"] == []
+    assert "my-bank" in caplog.text
+    assert "ConnectError" in caplog.text, "the operator is told what kind of failure it was"
+    assert "connection refused" not in response.text, "not the client app's business"
 
 
 @contextmanager
@@ -176,6 +194,50 @@ def _loopback_provider() -> Generator[int]:
         server.server_close()
 
 
+def _echo_the_basic_auth_password(request_text: str) -> str:
+    """Compose a status line carrying back the password the request just sent.
+
+    The shortest way for a provider to put a credential where a rendered
+    exception would carry it.
+    """
+    credentials = "no-credentials-seen"
+    for line in request_text.split("\r\n"):
+        if line.lower().startswith("authorization: basic "):
+            credentials = b64decode(line.split(" ", 2)[2]).decode()
+    return f"NOT-HTTP {credentials}"
+
+
+def test_a_provider_cannot_get_its_credential_into_a_log_by_echoing_it(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Requirement: nothing a provider puts on the wire is rendered by this application.
+
+    A provider is the attacker in this project's threat model -- a claim made
+    against a lookalike domain leaves one holding the aggregator's Basic Auth
+    password -- and here it hands that password straight back inside a
+    malformed status line, which is a position the HTTP library quotes.
+    """
+    password = "s3cret-provider-password"  # noqa: S105
+    auth = make_claimed_app(tmp_path)
+
+    with echoing_provider(_echo_the_basic_auth_password) as (port, echoed):
+        app = make_app(
+            tmp_path,
+            make_config(root=f"http://127.0.0.1:{port}/simplefin"),
+            make_access_urls(f"http://user:{password}@127.0.0.1:{port}/simplefin"),
+        )
+        with TestClient(app) as client:
+            response = client.get("/simplefin/accounts", auth=auth)
+
+    assert echoed == [f"NOT-HTTP user:{password}"], (
+        "the provider did hand the credential back, which is what the rest of this tests"
+    )
+    assert response.status_code == HTTPStatus.OK
+    assert "RemoteProtocolError" in caplog.text, "and this application saw the malformed reply"
+    assert password not in response.text
+    assert password not in caplog.text
+
+
 def test_a_provider_request_names_no_credentials_in_the_logs_or_the_body(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -200,7 +262,7 @@ def test_a_provider_request_names_no_credentials_in_the_logs_or_the_body(
         with TestClient(app) as client:
             response = client.get("/simplefin/accounts", auth=auth)
 
-    assert response.status_code == HTTPStatus.BAD_GATEWAY
+    assert response.status_code == HTTPStatus.OK
     # Named exactly, since the test client logs a request line of its own: this
     # is the provider request, rendered as httpx2 rendered it.
     assert f"HTTP Request: GET http://127.0.0.1:{port}/simplefin/accounts" in caplog.text

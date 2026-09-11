@@ -136,9 +136,9 @@ def _claim_access_url(claim_url: NormalizedUrl, entry: ProviderEntry) -> str:
             # carries no credentials for it to have dropped.
             response = claim_client.post(claim_url.origin_and_path)
         except httpx2.HTTPError as exc:
-            # httpx2's message describes the failure without naming the URL,
-            # whose path is the still-unclaimed setup token.
-            _fail(f"error: could not reach provider {entry.key!r}: {exc}")
+            # Not the message: httpx2's text can quote provider-chosen bytes,
+            # and the request path here is the live setup token.
+            _fail(f"error: could not reach provider {entry.key!r} ({type(exc).__name__})")
 
     if response.status_code == HTTPStatus.FORBIDDEN:
         already_claimed = (

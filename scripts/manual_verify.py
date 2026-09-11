@@ -16,6 +16,7 @@ on every load -- then run:
 from __future__ import annotations
 
 import base64
+import json
 import shutil
 import subprocess
 import sys
@@ -190,6 +191,11 @@ def run(demo_setup_token: str, config_dir: Path) -> None:
             "/simplefin/accounts",
         )
         print(f"    {accounts}")
+        # simplefin-aggregator responds 200 for an unreachable provider, so
+        # check whether the response included any accounts.
+        if not cast("dict[str, object]", json.loads(accounts)).get("accounts"):
+            message = "/simplefin/accounts returned no accounts; the provider did not answer"
+            raise RuntimeError(message)
 
         print("==> GET /simplefin/accounts with no credentials (expect 403)")
         _ = expect(

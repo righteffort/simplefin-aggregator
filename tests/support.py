@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import socket
+import threading
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, cast
 
 import httpx2
@@ -18,7 +21,7 @@ from simplefin_aggregator.config import Config
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Mapping
+    from collections.abc import Callable, Coroutine, Generator, Mapping
     from pathlib import Path
 
     from fastapi import FastAPI
@@ -113,3 +116,53 @@ def make_app(
         access_urls if access_urls is not None else make_access_urls(),
         app_tokens_path(config_dir),
     )
+
+
+@contextmanager
+def echoing_provider(compose: Callable[[str], str]) -> Generator[tuple[int, list[str]]]:
+    """Serve one request from a loopback socket, replying with a malformed status line.
+
+    `compose` builds that line from the raw request text, so the caller
+    chooses what comes back -- a header the request carried, the path it was
+    made on.
+
+    Yields the port to aim a client at, and the status lines the socket
+    accepted. Assert on those first: they say the fake did its part, which is
+    the premise of whatever the test then asserts about the application. They
+    do not say the bytes arrived, and nothing here can -- a client cannot tell
+    a malformed status line from a plain disconnect.
+    """
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    echoed: list[str] = []
+
+    def serve() -> None:
+        try:
+            connection = listener.accept()[0]
+        except OSError:
+            return
+        request = bytearray()
+        while b"\r\n\r\n" not in request:
+            chunk = connection.recv(65535)
+            if not chunk:
+                break
+            request.extend(chunk)
+        status_line = compose(request.decode("latin-1"))
+        payload = f"{status_line}\r\n\r\n".encode()
+        # `sendall(payload)` followed by `echoed.append(status_line)` would
+        # record a reply the socket never took. Slicing by what `send` returned
+        # records only what went out, and the `int` annotation is what stops
+        # `sendall` coming back: it returns None, and payload[:None] is the
+        # whole payload.
+        written: int = connection.send(payload)
+        echoed.append(payload[:written].decode().rstrip("\r\n"))
+        connection.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        yield cast(tuple[str, int], listener.getsockname())[1], echoed
+    finally:
+        listener.close()
+        thread.join(timeout=1)

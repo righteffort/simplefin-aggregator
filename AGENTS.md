@@ -40,6 +40,12 @@ warning category does not license the next one.
   Mutate what its premise rests on instead — for example, by weakening a
   compound constraint one clause at a time, replacing a setup step with a
   no-op, or deleting the operation whose failure the test is about.
+- **A test that asserts an absence needs a premise it can observe.** For
+  example, `assert secret not in output` passes for free whenever the fixture
+  never produced the secret. The fixture has to record what it did, and the
+  test has to assert on that record first. A record written beside the act
+  rather than out of it is not enough: delete the act and the record is still
+  there. Make the record depend on the act, so deleting the act deletes it.
 - **A test states required behavior, never that the implementation matches
   its dependency.** Name no library in a test's name, docstring or comments,
   and never assert on a library's own output. Write the expectation as a rule
@@ -57,8 +63,7 @@ warning category does not license the next one.
   marked secret placed where a password belongs does not exercise the case
   where a password prefix is read as a port; that needs `8443/secret`.
   Enumerate the ways the parse can go wrong and put a marker in each resulting
-  position. Three corpora in this project missed a real leak by getting this
-  backwards.
+  position.
 
 ## Secrets
 
@@ -70,6 +75,11 @@ that actively defend this, and `url_validation.py`'s `UrlValidationError`
 docstring states the rules for rendering a URL and where they deliberately
 stop. Read both before touching anything credential-adjacent, and if you add a
 path that handles a credential, add it there too.
+
+**Check your change against every entry in that list, not only the entries it
+appears to touch.** Each is a claim about the whole codebase — "the only place
+a provider's text is passed on is X" — and a new log line in `merge.py` can
+falsify one without going anywhere near the sentence that makes it.
 
 ## Comments and commit messages
 
@@ -129,6 +139,16 @@ Each step ends with this cycle:
    `docs/ARCHITECTURE.md`. If there is a contradiction between the code and
    either document, then either the document is stale or the code is
    incorrect; fix whichever it is.
+
+   **A step is not finished until `docs/ARCHITECTURE.md` describes the code
+   the step leaves behind.** That is more than resolving contradictions. A
+   sentence whose subject the change deleted is stale while every word in it
+   stays true, and a guarantee the change made load-bearing in a new place
+   belongs in the list that names it. So read the sections your delta touches,
+   not only the ones it argues with. A task whose brief defers this to a final
+   documentation step is the one exception, and only because the brief says so
+   in writing — tell every reviewer that, or they will each report the same
+   stale paragraph.
 2. **Present the work to the user, then stop.** This is a gate, not a
    courtesy: end the turn and wait for a reply. Their review routinely changes
    scope or direction, so a review launched first is spent on a version that
@@ -155,11 +175,10 @@ Each step ends with this cycle:
    `coderabbit:code-review` skill and `coderabbit:code-reviewer` agent are not
    a third opinion either, since both only wrap the CLI above.
 
-   **Do not pass the task's brief to CodeRabbit via `-c`.** It suppresses.
-   Measured on one step's range: two findings without it, one with, and the
-   finding it hid was a major lost-update bug that the brief's out-of-scope
-   list did not cover and had no view on. What keeps SSRF noise out is
-   `.coderabbit.yaml`, which applies on every run regardless. A brief's "if
+   **Do not pass the task's brief to CodeRabbit via `-c`.** It suppresses
+   findings the brief has no view on, including ones its out-of-scope list does
+   not cover. What keeps SSRF noise out is `.coderabbit.yaml`, which applies on
+   every run regardless. A brief's "if
    you want to push back" section belongs in *your* rejection of a finding,
    where it is reasoned and reported — not in the reviewer's prompt, where it
    silently pre-empts. Expect to reject more findings by hand; that is the
@@ -177,9 +196,8 @@ Each step ends with this cycle:
    something else — rather than shipping a step one reviewer short.
 
    Give a reviewer the *whole* brief as context, not just the step's
-   paragraph. Three reviewers independently reported the same stale
-   `ARCHITECTURE.md` because none of them had the sentence saying a later step
-   fixes it.
+   paragraph. One that lacks the sentence saying a later step fixes something
+   will report it as stale.
 4. **Account for every finding**, one line each: what was claimed, whether it
    is true, and fixed / rejected-with-reason / deferred. Verify a finding
    against the code before acting on it or relaying it — confident-but-wrong

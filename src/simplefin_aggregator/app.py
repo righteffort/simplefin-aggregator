@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from http import HTTPStatus
 from typing import TYPE_CHECKING, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -207,11 +208,16 @@ def create_app(
         responses = await fetch_all(
             state.provider_clients, providers_to_query, "/accounts", params, state.request_counter
         )
-        merged = merge(responses)
+        # No prefix: one provider needs no namespace to be distinguished from
+        # another, and giving it one would re-identify every account the client
+        # app already holds.
+        merged = merge([("", response) for response in responses])
+        # Always respond 200, even if a provider did not. A provider's failure is reported via the
+        # body's `errors`, which is what v1 provides that array for.
         return Response(
             content=rewrite_ids(merged.body),
-            status_code=merged.status,
-            media_type=merged.content_type,
+            status_code=HTTPStatus.OK,
+            media_type="application/json",
         )
 
     @app.get("/simplefin/info")
