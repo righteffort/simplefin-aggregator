@@ -8,9 +8,9 @@ to the client app as if it were a single bridge.
 review cycle, comment and commit discipline, secrets discipline. Read it first
 and follow it; nothing about how to work is repeated here.
 
-Read `docs/ARCHITECTURE.md` for the map of the code. It is current as of the
-start of this work, and this task invalidates parts of it — the final step
-brings it back into line.
+Read `docs/ARCHITECTURE.md` for the map of the code. It was current as of the
+start of this work, and this task invalidates parts of it; each step brings it
+back into line for what that step lands.
 
 This application implements **SimpleFIN protocol v1**
 (<https://www.simplefin.org/protocol-v1.html>), in both directions: v1 to the
@@ -113,10 +113,16 @@ came from.
   it. Two ids spanning two providers means two concurrent requests, each
   carrying its own subset, each also carrying the shared parameters
   (`start-date`, `end-date`, `pending`, `balances-only`).
-- **An id matching no prefix** is dropped from routing, logged, and produces a
-  trailing error entry. Do not echo the id into the response body; log it. If
-  every requested id is unknown, no provider is queried at all and the
-  response is a well-formed empty one.
+- **An id matching no prefix** is dropped from routing and logged, naming the
+  id, and nothing about it reaches the response. If every requested id is
+  unknown, no provider is queried at all and the response is a well-formed
+  empty one.
+
+  **Settled in B: logged, not reported.** An earlier draft of this section
+  asked for a trailing `errors` entry, which contradicts the rule below that
+  D1's is the only synthesized error worth putting in a body: the id cannot be
+  echoed back into a body another program displays, and an entry that withholds
+  it is a bare count naming nothing a client app can act on.
 
 `fetch_all` therefore takes per-provider parameters. Something like
 
@@ -226,7 +232,7 @@ SimpleFIN Bridge emits, and what a client app recognises, names the
 institution:
 
 ```text
-Connection to {name} may need attention. {this application's detail, naming the provider}
+Connection to {account name} may need attention. {this application's detail, naming the provider}
 ```
 
 Producing that for a provider this aggregator cannot currently reach means
@@ -273,23 +279,11 @@ a store shaped around one answer would have to be rewritten for the other.
 
 #### Synthesizing the error entries
 
-> **Open question. Do not settle it from first principles.** Whether a failed
-> provider should contribute one entry per remembered account or one per
-> distinct institution — and exactly what text a client app matches on —
-> depends on what SimpleFIN Bridge actually emits and what Actual Budget
-> actually looks for. That is being established empirically and will take
-> calendar time. Build the smaller half first: the store above does not depend
-> on the answer, and the synthesis is one function over it.
->
-> The argument for per-institution is that five accounts at one bank
-> are one broken connection, and five near-identical strings are
-> noise. The argument for per-account is that it is what the observed
-> behaviour may turn out to be. Whichever lands, say in a comment that
-> it was determined by observation, not by reasoning, so a later
-> reader does not re-derive it and get the other answer. If you need
-> to proceed to the absence of the definitive answer, assume it is
-> per-account, leave behind a TODO for yourself to revisit at the
-> relevant point in the code.
+**One entry per remembered account**, whatever institution it belongs to: five
+accounts at one bank produce five entries. That is a requirement, so pin it as
+one — and say in a comment where the entries are built that per-account is the
+settled rule, or a later reader will re-derive per-institution and get the
+other answer.
 
 **When a provider has nothing remembered** — never yet reached, or a fresh
 install — do not produce any error entries for the provider, only issue a log
@@ -437,16 +431,18 @@ Do not build these.
 Each step is a review-cycle unit as `AGENTS.md` describes, and lands as one
 commit.
 
-**Status: C and A are landed** on `dev-multi` — `e8b34f2` answers `/info`
-locally, `2331774` is the merge rewrite. C ran before A because `/info` was a
-caller of `merge`, and an `/info` body is not an accounts body: once `merge`
-enforced the usable/unusable rule below, `{"versions": ["1.0"]}` would have
-read as a failed provider. **What remains is B, then D1, D2, E.**
+**Status: C, A and B are landed** on `dev-multi` — `e8b34f2` answers `/info`
+locally, `2331774` is the merge rewrite, and B configures and routes several
+providers. C ran before A because `/info` was a caller of `merge`, and an
+`/info` body is not an accounts body: once `merge` enforced the usable/unusable
+rule below, `{"versions": ["1.0"]}` would have read as a failed provider.
+**What remains is D1, D2, E.**
 
-Decisions those two steps settled are recorded in place below, in the sections
-they govern: the `version` spelling, collisions being logged rather than
-reported, an unreadable `errors` costing only the messages, and no synthesized
-provider-failure error before D1.
+Decisions those steps settled are recorded in place below, in the sections they
+govern: the `version` spelling, collisions being logged rather than reported,
+an unreadable `errors` costing only the messages, no synthesized
+provider-failure error before D1, and an unroutable account id being logged
+rather than reported.
 
 **A. Merge several responses.** Rewrite `merge` and its tests: concatenation,
 prefixing, the deterministic order, the usable/unusable rule, always-200,
@@ -459,7 +455,9 @@ synthetic response lists, which is where the interesting cases live.
 gains `prefix` and the validators, `provider_resolution` learns to split a
 prefixed id, `fetch_all` takes per-provider parameters, `app.accounts` builds
 them, `id_rewriting.py` is deleted. At the end of this step the application is
-genuinely multi-provider.
+genuinely multi-provider. `docs/ARCHITECTURE.md` is brought into line with
+everything landed by then — A's and C's paragraphs included, since neither
+step updated it.
 
 **C. `/info` answers locally.** Small and separable; it is a behaviour change
 worth its own review rather than a footnote to B.
@@ -467,13 +465,11 @@ worth its own review rather than a footnote to B.
 **D1. The last-seen accounts.** `provider_accounts.json` on the shared
 state-file helper, loaded at startup into `_AppState`, updated from unfiltered
 successful responses, persisted on change, and consumed by `merge` to
-synthesize the error entries for a failed provider. The store starts empty on
+synthesize the error entries for a failed provider, one per remembered account
+as "Synthesizing the error entries" above requires. The store starts empty on
 every existing installation, so the generic nothing-remembered-yet message is
 what a first run produces — that is expected here, and D2 is what makes it
-rare. The open question above governs only the synthesis; if it is still open
-when this step is ready, build whichever shape the evidence so far favours,
-mark the test that pins it as pinning behaviour rather than a requirement, and
-say in the commit message that it is provisional.
+rare.
 
 **D2. The claim probe.** `claim` fetches `balances-only=1` after storing the
 access URL, populates the store, and warns on failure without failing. It
@@ -485,13 +481,12 @@ probe.
 - user-facing documentation: `README.md` (the two-provider example,
   prefixes and their permanence, the blank-prefix instruction and its
   hazard), `config.toml`, `scripts/manual_verify.py`
-- developer-facing: `docs/TODO.md`, and `docs/ARCHITECTURE.md`: the deleted
-  modules, the id-namespacing scheme, the routing rules, the `version`
-  rejection, the last-seen accounts as a further piece of on-disk state with
-  its own risk profile, and the retry asymmetry between the probe and
-  everything else. A lands the rest — the rewritten `merge.py`, the merging
-  rules, the always-200 contract and `/info` answering locally are described
-  there already.
+- developer-facing: `docs/TODO.md`, and one read of `docs/ARCHITECTURE.md` as
+  a whole. Every step has already described what it landed, so this pass is
+  not for correctness. Look for: the same fact in two sections, because two
+  steps each put it in the right place; an order that no longer matches how
+  someone meets the system; a section that has grown past what it is worth.
+  Cutting is the expected output.
 - agent-facing: `AGENTS.md` update to reflect any learnings/memories from the
   session. If you make changes here, do not blindly append, synthesize
   an improved file that stands on its own.
@@ -504,8 +499,7 @@ Merging and ordering:
   configured provider order, each provider's own order preserved, every id
   carrying its provider's prefix.
 - A provider returning both accounts and `errors` contributes both.
-- Each provider's own `errors` strings appear in configured provider order,
-  and aggregator-level errors come after all of them.
+- Each provider's own `errors` strings appear in configured provider order.
 - An `errors` field that is not an array of strings leaves that provider's
   accounts intact and drops only the messages.
 - A provider returning 200 with an unparseable body, an `accounts` entry with
@@ -531,8 +525,8 @@ Routing:
 - `account` ids spanning two providers: two concurrent requests, each carrying
   only its own ids and both carrying the shared parameters.
 - An id belonging to one provider does not reach the other.
-- An unknown id: not routed anywhere, produces a trailing error, and does not
-  appear in the response body.
+- An unknown id: not routed anywhere, logged naming the id, and nothing about
+  it in the response body.
 - All ids unknown: no provider is queried, response is 200 with empty
   accounts.
 - A blank-prefix provider and another provider producing the same merged id:
