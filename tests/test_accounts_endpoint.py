@@ -12,6 +12,7 @@ import httpx2
 from fastapi.testclient import TestClient
 
 from .support import (
+    ProviderSpec,
     echoing_provider,
     install_provider_transport,
     make_access_urls,
@@ -22,10 +23,60 @@ from .support import (
 
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Mapping, Sequence
     from pathlib import Path
 
     import pytest
+
+    from .support import MockHandler
+
+    Account = dict[str, object]
+    Params = list[tuple[str, str]]
+
+BANK_A = ProviderSpec(
+    key="bank-a",
+    root="https://bank-a.example.com/simplefin",
+    access_url="https://user:pass@bank-a.example.com/simplefin",
+)
+BANK_B = ProviderSpec(
+    key="bank-b",
+    root="https://bank-b.example.com/simplefin",
+    access_url="https://user:pass@bank-b.example.com/simplefin",
+)
+
+
+def _recording(calls: list[Params], accounts: Sequence[Account]) -> MockHandler:
+    """A provider that answers with `accounts` and records the parameters it was asked with."""
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        calls.append(list(request.url.params.multi_items()))
+        return httpx2.Response(HTTPStatus.OK, json={"accounts": list(accounts)})
+
+    return handler
+
+
+@contextmanager
+def _aggregating(
+    tmp_path: Path,
+    specs: Sequence[ProviderSpec] = (BANK_A, BANK_B),
+    accounts: Mapping[str, Sequence[Account]] | None = None,
+) -> Generator[tuple[TestClient, tuple[str, str], dict[str, list[Params]]]]:
+    """A client app, its credentials, and what each provider behind the aggregator was asked.
+
+    Each provider's entry lists one set of query parameters per request it
+    received, so a test can assert both what a provider was asked for and that
+    it was asked once.
+    """
+    reported: Mapping[str, Sequence[Account]] = accounts if accounts is not None else {}
+    auth = make_claimed_app(tmp_path)
+    app = make_app(tmp_path, make_config(*specs), make_access_urls(*specs))
+    calls: dict[str, list[Params]] = {spec.key: [] for spec in specs}
+    with TestClient(app) as client:
+        for spec in specs:
+            install_provider_transport(
+                app, spec.key, _recording(calls[spec.key], reported.get(spec.key, ()))
+            )
+        yield client, auth, calls
 
 
 def test_accounts_without_basic_auth_is_rejected(tmp_path: Path) -> None:
@@ -53,10 +104,13 @@ def test_accounts_relays_every_key_a_provider_sent_inside_an_account(tmp_path: P
         response = client.get("/simplefin/accounts", auth=auth)
 
     assert response.status_code == HTTPStatus.OK
-    assert response.json() == {"accounts": [account], "errors": []}
+    assert response.json() == {"accounts": [{**account, "id": "my-bank:acc-1"}], "errors": []}, (
+        "only the id changes, and it carries this provider's prefix"
+    )
 
 
 def test_accounts_forwards_repeated_account_params(tmp_path: Path) -> None:
+    """Requirement: a filter naming several accounts reaches the provider naming all of them."""
     received_params: list[tuple[str, str]] = []
 
     async def handler(request: httpx2.Request) -> httpx2.Response:
@@ -68,10 +122,14 @@ def test_accounts_forwards_repeated_account_params(tmp_path: Path) -> None:
 
     with TestClient(app) as client:
         install_provider_transport(app, "my-bank", handler)
-        response = client.get("/simplefin/accounts?account=acc-1&account=acc-2", auth=auth)
+        response = client.get(
+            "/simplefin/accounts?account=my-bank:acc-1&account=my-bank:acc-2", auth=auth
+        )
 
     assert response.status_code == HTTPStatus.OK
-    assert [v for k, v in received_params if k == "account"] == ["acc-1", "acc-2"]
+    assert [v for k, v in received_params if k == "account"] == ["acc-1", "acc-2"], (
+        "the provider is asked about the ids it issued, not the ones the client app holds"
+    )
 
 
 def test_accounts_only_forwards_allowed_query_params(tmp_path: Path) -> None:
@@ -86,11 +144,13 @@ def test_accounts_only_forwards_allowed_query_params(tmp_path: Path) -> None:
 
     with TestClient(app) as client:
         install_provider_transport(app, "my-bank", handler)
-        response = client.get("/simplefin/accounts?version=2&unexpected-param=nope", auth=auth)
+        response = client.get(
+            "/simplefin/accounts?balances-only=1&unexpected-param=nope", auth=auth
+        )
 
     assert response.status_code == HTTPStatus.OK
     forwarded_keys = {k for k, _ in received_params}
-    assert forwarded_keys == {"version"}
+    assert forwarded_keys == {"balances-only"}
 
 
 def test_accounts_does_not_relay_a_providers_403_as_its_own(tmp_path: Path) -> None:
@@ -163,6 +223,246 @@ def test_accounts_answers_a_v1_body_when_a_provider_is_unreachable(
     assert "connection refused" not in response.text, "not the client app's business"
 
 
+def test_two_providers_accounts_arrive_in_configured_order_behind_their_prefixes(
+    tmp_path: Path,
+) -> None:
+    """Requirement: the union of both providers' accounts is what the client app sees."""
+    with _aggregating(
+        tmp_path,
+        accounts={
+            "bank-a": [{"id": "acc-1", "name": "Checking"}, {"id": "acc-2"}],
+            "bank-b": [{"id": "acc-1", "name": "Savings"}],
+        },
+    ) as (client, auth, _calls):
+        response = client.get("/simplefin/accounts", auth=auth)
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json() == {
+        "accounts": [
+            {"id": "bank-a:acc-1", "name": "Checking"},
+            {"id": "bank-a:acc-2"},
+            {"id": "bank-b:acc-1", "name": "Savings"},
+        ],
+        "errors": [],
+    }
+
+
+def test_without_an_account_filter_every_provider_is_asked_for_everything(tmp_path: Path) -> None:
+    """Requirement: the endpoint with no filter means every account this server knows about."""
+    with _aggregating(tmp_path) as (client, auth, calls):
+        response = client.get("/simplefin/accounts?start-date=1700000000", auth=auth)
+
+    assert response.status_code == HTTPStatus.OK
+    assert calls == {
+        "bank-a": [[("start-date", "1700000000")]],
+        "bank-b": [[("start-date", "1700000000")]],
+    }, "each provider asked once, with the shared parameters and no account filter"
+
+
+def test_account_ids_spanning_two_providers_become_one_request_each(tmp_path: Path) -> None:
+    """Requirement: an account id never reaches a provider that did not issue it.
+
+    Each provider is asked only about its own accounts, and both are told the
+    parameters the client app sent for the request as a whole.
+    """
+    with _aggregating(tmp_path) as (client, auth, calls):
+        asked = "account=bank-b:b-1&account=bank-a:a-1&account=bank-b:b-2&pending=1"
+        response = client.get(f"/simplefin/accounts?{asked}", auth=auth)
+
+    assert response.status_code == HTTPStatus.OK
+    assert calls == {
+        "bank-a": [[("pending", "1"), ("account", "a-1")]],
+        "bank-b": [[("pending", "1"), ("account", "b-1"), ("account", "b-2")]],
+    }
+
+
+def test_a_filtered_request_merges_in_configured_order_not_the_order_of_the_ids(
+    tmp_path: Path,
+) -> None:
+    """Requirement: the response's order is the operator's configuration, not the client's ask.
+
+    The ids arrive naming the second provider first, so an implementation that
+    built its requests in the order the ids came in would answer in that order.
+    """
+    with _aggregating(
+        tmp_path, accounts={"bank-a": [{"id": "a-1"}], "bank-b": [{"id": "b-1"}]}
+    ) as (client, auth, _calls):
+        response = client.get(
+            "/simplefin/accounts?account=bank-b:b-1&account=bank-a:a-1", auth=auth
+        )
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json() == {
+        "accounts": [{"id": "bank-a:a-1"}, {"id": "bank-b:b-1"}],
+        "errors": [],
+    }
+
+
+def test_an_id_no_prefix_claims_reaches_no_provider_and_is_logged_not_reported(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Requirement: an unroutable id costs the rest of the request nothing, and is the operator's.
+
+    It goes to the log, naming the id, and nothing about it reaches the
+    response: the id came from outside, and a count without it names nothing a
+    client app could act on.
+    """
+    with (
+        _aggregating(tmp_path, accounts={"bank-a": [{"id": "a-1"}]}) as (client, auth, calls),
+        caplog.at_level(logging.WARNING),
+    ):
+        response = client.get(
+            "/simplefin/accounts?account=bank-a:a-1&account=bank-c:c-1", auth=auth
+        )
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json() == {"accounts": [{"id": "bank-a:a-1"}], "errors": []}
+    assert "bank-c:c-1" not in response.text
+    assert "bank-c:c-1" in caplog.text, "the operator is told which id it was"
+    assert calls["bank-b"] == [], "an id belonging to nobody is not fanned out"
+
+
+def test_a_request_naming_only_unknown_ids_asks_no_provider_at_all(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Requirement: no provider traffic beyond what the client app actually asked about.
+
+    The answer is a well-formed empty one rather than an error: the request was
+    valid, and it named nothing this server has.
+    """
+    with _aggregating(tmp_path) as (client, auth, calls), caplog.at_level(logging.WARNING):
+        response = client.get("/simplefin/accounts?account=nobody:1&account=nobody:2", auth=auth)
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json() == {"accounts": [], "errors": []}
+    assert calls == {"bank-a": [], "bank-b": []}
+    assert "nobody:1" in caplog.text
+    assert "nobody:2" in caplog.text
+
+
+def test_a_blank_prefix_provider_may_collide_with_another_without_losing_an_account(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Requirement: a collision the operator configured costs a log line, not the user's data.
+
+    A blank prefix is a knowingly leaky choice -- an id of its own that starts
+    with another provider's prefix collides -- and the answer is to tell the
+    operator, who can change a prefix, rather than the client app, which
+    cannot.
+    """
+    blank = ProviderSpec(key=BANK_A.key, root=BANK_A.root, prefix="", access_url=BANK_A.access_url)
+    with (
+        _aggregating(
+            tmp_path,
+            specs=(blank, BANK_B),
+            accounts={
+                "bank-a": [{"id": "bank-b:shared", "name": "from a"}],
+                "bank-b": [{"id": "shared", "name": "from b"}],
+            },
+        ) as (client, auth, _calls),
+        caplog.at_level(logging.WARNING),
+    ):
+        response = client.get("/simplefin/accounts", auth=auth)
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json() == {
+        "accounts": [
+            {"id": "bank-b:shared", "name": "from a"},
+            {"id": "bank-b:shared", "name": "from b"},
+        ],
+        "errors": [],
+    }
+    assert "bank-a" in caplog.text
+    assert "bank-b" in caplog.text
+
+
+ACCEPTED_VERSIONS = ["1", "1.0"]
+
+# Every other value names a protocol this server does not implement -- including
+# "1.0.7", which would name a fix release this application makes no claim about.
+REFUSED_VERSIONS = ["2", "2.0", "1.0.7", "", "one"]
+
+
+def test_only_the_version_this_server_speaks_is_answered(tmp_path: Path) -> None:
+    """Requirement: v1 and v1 only, in either published spelling, and never forwarded.
+
+    v1 names "1.0" in its own /info example; v2 introduces the parameter as a
+    major-version prefix and says "1" for the earlier protocol, so both name
+    what this server speaks. Answering anything else in v1 would be a silent
+    lie about what the body is, and forwarding the parameter would be worse: a
+    provider that honoured it would put v2 shapes into a body merged as v1.
+
+    Accepted and refused are asked here together because what makes the
+    accepted ones meaningful is that the same URL, spelled with another value,
+    is refused.
+    """
+    with _aggregating(tmp_path) as (client, auth, calls):
+        answered = [
+            client.get(f"/simplefin/accounts?version={version}", auth=auth)
+            for version in ACCEPTED_VERSIONS
+        ]
+        refused = [
+            client.get(f"/simplefin/accounts?version={version}", auth=auth)
+            for version in REFUSED_VERSIONS
+        ]
+
+    assert [response.status_code for response in answered] == [HTTPStatus.OK] * len(
+        ACCEPTED_VERSIONS
+    )
+    assert [response.status_code for response in refused] == [HTTPStatus.BAD_REQUEST] * len(
+        REFUSED_VERSIONS
+    )
+    assert calls == {
+        "bank-a": [[]] * len(ACCEPTED_VERSIONS),
+        "bank-b": [[]] * len(ACCEPTED_VERSIONS),
+    }, "an accepted version is not forwarded, and a refused one reaches no provider at all"
+    for response in refused:
+        assert response.json() == {
+            "accounts": [],
+            "errors": ["simplefin-aggregator implements SimpleFIN protocol version 1.0 only."],
+        }, "refused in the one shape this server has"
+
+
+def test_every_version_value_is_checked_and_not_just_the_first(tmp_path: Path) -> None:
+    """Requirement: a repeated parameter cannot carry an unsupported version past the check."""
+    with _aggregating(tmp_path) as (client, auth, calls):
+        supported = client.get("/simplefin/accounts?version=1&version=1.0", auth=auth)
+        mixed = client.get("/simplefin/accounts?version=1&version=2", auth=auth)
+
+    assert supported.status_code == HTTPStatus.OK
+    assert mixed.status_code == HTTPStatus.BAD_REQUEST
+    assert calls == {"bank-a": [[]], "bank-b": [[]]}, "only the supported request was forwarded"
+
+
+def test_a_provider_that_fails_is_asked_once_and_costs_only_its_own_accounts(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Requirement: nothing on this path retries, and one provider's failure is not the others'."""
+    attempts: list[str] = []
+
+    async def failing(request: httpx2.Request) -> httpx2.Response:
+        attempts.append("bank-b")
+        msg = "connection refused"
+        raise httpx2.ConnectError(msg, request=request)
+
+    async def answering(_request: httpx2.Request) -> httpx2.Response:
+        attempts.append("bank-a")
+        return httpx2.Response(HTTPStatus.OK, json={"accounts": [{"id": "a-1"}]})
+
+    auth = make_claimed_app(tmp_path)
+    app = make_app(tmp_path, make_config(BANK_A, BANK_B), make_access_urls(BANK_A, BANK_B))
+
+    with TestClient(app) as client, caplog.at_level(logging.WARNING):
+        install_provider_transport(app, "bank-a", answering)
+        install_provider_transport(app, "bank-b", failing)
+        response = client.get("/simplefin/accounts", auth=auth)
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json() == {"accounts": [{"id": "bank-a:a-1"}], "errors": []}
+    assert sorted(attempts) == ["bank-a", "bank-b"], "one request each, and no retry"
+    assert "bank-b" in caplog.text
+
+
 @contextmanager
 def _loopback_provider() -> Generator[int]:
     """A provider the app can really reach, answering every GET with a redirect.
@@ -221,11 +521,11 @@ def test_a_provider_cannot_get_its_credential_into_a_log_by_echoing_it(
     auth = make_claimed_app(tmp_path)
 
     with echoing_provider(_echo_the_basic_auth_password) as (port, echoed):
-        app = make_app(
-            tmp_path,
-            make_config(root=f"http://127.0.0.1:{port}/simplefin"),
-            make_access_urls(f"http://user:{password}@127.0.0.1:{port}/simplefin"),
+        provider = ProviderSpec(
+            root=f"http://127.0.0.1:{port}/simplefin",
+            access_url=f"http://user:{password}@127.0.0.1:{port}/simplefin",
         )
+        app = make_app(tmp_path, make_config(provider), make_access_urls(provider))
         with TestClient(app) as client:
             response = client.get("/simplefin/accounts", auth=auth)
 
@@ -254,11 +554,11 @@ def test_a_provider_request_names_no_credentials_in_the_logs_or_the_body(
     auth = make_claimed_app(tmp_path)
 
     with _loopback_provider() as port, caplog.at_level(logging.INFO):
-        app = make_app(
-            tmp_path,
-            make_config(root=f"http://127.0.0.1:{port}/simplefin"),
-            make_access_urls(f"http://user:{password}@127.0.0.1:{port}/simplefin"),
+        provider = ProviderSpec(
+            root=f"http://127.0.0.1:{port}/simplefin",
+            access_url=f"http://user:{password}@127.0.0.1:{port}/simplefin",
         )
+        app = make_app(tmp_path, make_config(provider), make_access_urls(provider))
         with TestClient(app) as client:
             response = client.get("/simplefin/accounts", auth=auth)
 

@@ -47,17 +47,21 @@ async def fetch(
 
 async def fetch_all(
     clients: Mapping[str, httpx2.AsyncClient],
-    providers: Sequence[Provider],
+    requests: Sequence[tuple[Provider, Sequence[tuple[str, str]]]],
     path: str,
-    params: Sequence[tuple[str, str]],
     counter: RequestCounter,
 ) -> list[ProviderResponse]:
-    """Fan out to every given provider concurrently. Output order matches `providers`."""
+    """Issue every given request concurrently. Output order matches `requests`.
+
+    Each provider is paired with its own parameters, because an `account`
+    filter is a list of that provider's own account ids: handing one provider
+    another's would ask it about accounts it has never heard of.
+    """
     return list(
         await asyncio.gather(
             *(
                 fetch(clients[provider.key], provider.key, path, params, counter)
-                for provider in providers
+                for provider, params in requests
             )
         )
     )

@@ -161,18 +161,124 @@ def test_load_config_rejects_zero_providers(tmp_path: Path) -> None:
         _ = load_config(path)
 
 
-def test_load_config_rejects_more_than_one_provider(tmp_path: Path) -> None:
-    two_providers = (
-        VALID_TOML
-        + """
-[[providers]]
-key = "redbark"
-"""
-    )
-    path = _write(tmp_path, two_providers)
+def _providers_toml(*entries: tuple[str, str | None]) -> str:
+    """A config naming several providers by key, each with an explicit prefix or none.
 
-    with pytest.raises(ConfigError):
+    Every key named gets a `custom_providers` entry, deduplicated, so that a
+    repeated key is rejected for being repeated in `providers` rather than for
+    defining the same custom provider twice.
+    """
+    customs = "".join(
+        f"""
+[[custom_providers]]
+key = "{key}"
+label = "Test Provider"
+root = "https://{key}.example.com/simplefin"
+"""
+        for key in dict.fromkeys(key for key, _ in entries)
+    )
+    providers = "".join(
+        f"""
+[[providers]]
+key = "{key}"
+"""
+        + ("" if prefix is None else f'prefix = "{prefix}"\n')
+        for key, prefix in entries
+    )
+    return f'base_url = "http://127.0.0.1:8080"\n{customs}{providers}'
+
+
+def test_a_providers_prefix_defaults_to_its_key_and_a_colon(tmp_path: Path) -> None:
+    """Requirement: an unconfigured prefix namespaces that provider's ids anyway.
+
+    The colon is what keeps one default from being a prefix of another, since
+    a key cannot contain one.
+    """
+    path = _write(tmp_path, _providers_toml(("bank-a", None), ("bank-b", None)))
+
+    config = load_config(path)
+
+    assert [provider.prefix for provider in config.providers] == ["bank-a:", "bank-b:"]
+
+
+def test_an_explicit_prefix_replaces_the_default(tmp_path: Path) -> None:
+    """Requirement: the operator owns the prefix, including the blank one.
+
+    A blank prefix is how someone already syncing straight from a provider
+    keeps the account ids their client app holds, so it has to be
+    distinguishable from having said nothing.
+    """
+    path = _write(tmp_path, _providers_toml(("bank-a", ""), ("bank-b", "b.")))
+
+    config = load_config(path)
+
+    assert [provider.prefix for provider in config.providers] == ["", "b."]
+
+
+def test_load_config_accepts_several_providers(tmp_path: Path) -> None:
+    """Requirement: aggregating more than one provider is the point of the application."""
+    path = _write(tmp_path, _providers_toml(("bank-a", None), ("bank-b", None), ("bank-c", None)))
+
+    config = load_config(path)
+
+    assert [provider.key for provider in config.providers] == ["bank-a", "bank-b", "bank-c"]
+
+
+def test_load_config_rejects_a_provider_key_named_twice(tmp_path: Path) -> None:
+    """Requirement: everything per-provider is keyed by the key, so two entries would collapse."""
+    path = _write(tmp_path, _providers_toml(("bank-a", "one."), ("bank-a", "two.")))
+
+    with pytest.raises(ConfigError, match="more than once"):
         _ = load_config(path)
+
+
+def test_load_config_rejects_two_blank_prefixes(tmp_path: Path) -> None:
+    """Requirement: the blank prefix is the catch-all, and two catch-alls name no owner."""
+    path = _write(tmp_path, _providers_toml(("bank-a", ""), ("bank-b", "")))
+
+    with pytest.raises(ConfigError, match="blank prefix"):
+        _ = load_config(path)
+
+
+def test_load_config_rejects_a_prefix_that_is_a_prefix_of_another(tmp_path: Path) -> None:
+    """Requirement: distinctness is not enough -- `bank` and `bank2` are distinct and ambiguous."""
+    path = _write(tmp_path, _providers_toml(("bank-a", "bank"), ("bank-b", "bank2")))
+
+    with pytest.raises(ConfigError, match="is a prefix of"):
+        _ = load_config(path)
+
+
+def test_load_config_accepts_one_blank_prefix_beside_prefix_free_ones(tmp_path: Path) -> None:
+    """Requirement: the catch-all is legal, which is what the rule above has to leave room for."""
+    path = _write(tmp_path, _providers_toml(("bank-a", ""), ("bank-b", "b:"), ("bank-c", "bank2")))
+
+    config = load_config(path)
+
+    assert [provider.prefix for provider in config.providers] == ["", "b:", "bank2"]
+
+
+def test_load_config_rejects_a_prefix_a_url_would_have_to_escape(tmp_path: Path) -> None:
+    """Requirement: a prefix travels in a query parameter and lands in a client app's database."""
+    path = _write(tmp_path, _providers_toml(("bank-a", "my bank:")))
+
+    with pytest.raises(ConfigError, match="must match"):
+        _ = load_config(path)
+
+
+def test_a_rejected_prefix_is_not_quoted_back(tmp_path: Path) -> None:
+    """Requirement: a value out of this file reaches no message, however unlikely a secret is here.
+
+    The config holds no credentials, but a paste into the wrong field is how
+    one would get here, and the entry's position says which prefix it was.
+    """
+    path = _write(tmp_path, _providers_toml(("bank-a", "https://user:leak-password@host/")))
+
+    with pytest.raises(ConfigError) as exc_info:
+        _ = load_config(path)
+
+    message = str(exc_info.value)
+    assert "leak-password" not in message
+    assert "providers.0" in message, "the entry is named even though its value is not"
 
 
 def test_load_config_warns_on_permissive_file_mode(

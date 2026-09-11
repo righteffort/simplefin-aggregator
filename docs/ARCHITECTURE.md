@@ -17,9 +17,10 @@ more SimpleFIN providers behind it. `GET /simplefin/accounts` answers 200, or
 403 for a client authentication failure, and nothing else: a provider's own
 failure is reported in v1's `errors` array rather than in this server's status,
 because 403 here is a statement about the client app's credentials and a
-provider's is about a different pair of principals. `Config` still accepts
-exactly one provider — the rest of the multi-provider version is what "Seams
-for the multi-provider future" below describes.
+provider's is about a different pair of principals. The accounts of every
+configured provider are presented as one set, each account id behind its
+provider's prefix — see "Account id namespacing" for the scheme and the
+routing that inverts it.
 
 The other half of the job is credential handling. A provider access URL embeds
 Basic Auth credentials for the user's bank data, and it is obtained by pasting
@@ -34,7 +35,7 @@ codebase than the proxying does.
 | File | Responsibility |
 |---|---|
 | `cli.py` | Typer entry points: `claim`, `serve`, and the `app` group (`new`, `list`, `revoke`, `regen`), each taking `--config-dir`. Wires everything else together. `main()` is the `console_scripts` target. |
-| `config.py` | Pydantic models (`Config`, `Provider`, `CustomProvider`), `load_config()`, and where the config directory lives. All config validation lives here. Holds no credentials. |
+| `config.py` | Pydantic models (`Config`, `Provider`, `CustomProvider`), `load_config()`, and where the config directory lives. All config validation lives here, the prefix rules included. Holds no credentials. |
 | `state_file.py` | Everything this application does with a file it owns: the permission warning, the redacted validation-error rendering, the atomic 0600 write, the sidecar `flock`, and the locked read-modify-write. Imports nothing else in the package — `config.py` takes its warning and its error rendering from here, not the other way around. |
 | `app_tokens.py` | The app token store: the two-state record, the digest helpers, and the constructors that mint a setup token and spend one for credentials. |
 | `provider_registry.py` | `ProviderEntry` and `KNOWN_PROVIDERS`: the fixed set of providers a setup token may be claimed from, plus `merged_providers`/`find_provider`. Must not import `config.py` — config imports it. |
@@ -48,12 +49,11 @@ codebase than the proxying does.
 | `transport.py` | `fetch`/`fetch_all`: the concurrent, non-raising provider-request layer. |
 | `provider_response.py` | `ProviderSuccess` / `ProviderFailure` / `ProviderResponse` — the uniform result type `fetch` always returns. |
 | `merge.py` | `merge(results) -> MergedResponse`: several providers' responses concatenated into one v1 body, each account id behind its provider's prefix. |
-| `provider_resolution.py` | `resolve_provider_for_account`: "which provider owns this account id" seam. Trivial today (always the sole provider). |
-| `id_rewriting.py` | `rewrite_ids` / `unrewrite_ids`: no-op seams for future cross-provider id namespacing. |
+| `provider_resolution.py` | `resolve_provider_for_account`: which provider owns an exposed account id, and what that id is to the provider itself. |
 | `request_counter.py` | `RequestCounter`: per-provider daily request counts, logged for observability only, never used as a control. |
 | `access_log.py` | Generic uvicorn-access-log redaction utility. Knows nothing about SimpleFIN or claim tokens — `app.py`/`cli.py` supply what to redact. |
 
-`tests/support.py` holds shared test helpers (`make_config`,
+`tests/support.py` holds shared test helpers (`ProviderSpec`, `make_config`,
 `make_access_urls`, `make_app`, `install_provider_transport`) used across most
 test files.
 
@@ -65,7 +65,7 @@ Three files, plus a lock sidecar per store, all in the directory
 
 | File | Written by | Holds |
 |---|---|---|
-| `config.toml` | the user, by hand | bind address, `base_url`, provider keys, `custom_providers` |
+| `config.toml` | the user, by hand | bind address, `base_url`, provider keys and prefixes, `custom_providers` |
 | `provider_creds.json` | `claim` | provider key → provider access URL |
 | `aggregator_creds.json` | `app new`/`revoke`/`regen`, and the claim route | app key → an unclaimed or claimed app token record, digests only |
 
@@ -117,7 +117,7 @@ is what this application could have written.
 Config
   bind_host: str = "127.0.0.1"
   bind_port: int = 8080
-  providers: list[Provider]           # Field(min_length=1, max_length=1) -- exactly one, for now
+  providers: list[Provider]           # Field(min_length=1) -- one or more, keys distinct
   custom_providers: list[CustomProvider] = []
   base_url: str                       # validated: ASCII, http/https, has a host, no user-info,
                                       #   http only for a literal loopback IP
@@ -125,6 +125,7 @@ Config
 
 Provider
   key: str                            # a provider key; resolves against provider_entries()
+  prefix: str                         # defaults to f"{key}:"; [A-Za-z0-9._:-]* if given
 
 CustomProvider
   key: str
@@ -142,15 +143,29 @@ falls on the input, and it is checked at load time rather than where
 prints and a failure there would leave an app that could never be handed a
 token.
 
-A `Provider` is now just a reference: no `name`, and no `access_url` (that
-moved to the store). `key` is the identifier everywhere — the store's key, the
-`provider_clients` dict's key, and what appears in log lines.
+A `Provider` is a reference plus a namespace: no `name`, and no `access_url`
+(that lives in the store). `key` is the identifier everywhere — the store's
+key, the `provider_clients` dict's key, and what appears in log lines — and
+`prefix` is what the client app sees, per "Account id namespacing".
 
-Every `provider.key` is resolved against `provider_entries()` by a model-level
-validator, so a dangling reference fails at config-load time for *every*
-command rather than at first dereference — and a `custom_providers` root is
-parsed during validation, so a broken one fails at `claim` time rather than
-surviving to `serve`.
+Three model-level checks run at load time rather than at first use, so every
+command reports them and not just the one that would trip over them:
+
+- Every `provider.key` is resolved against `provider_entries()`, so a dangling
+  reference fails for *every* command rather than at first dereference — and a
+  `custom_providers` root is parsed during validation, so a broken one fails at
+  `claim` time rather than surviving to `serve`.
+- No key appears twice in `providers`. Everything per-provider is keyed by it,
+  so two entries sharing one would collapse into a single provider rather than
+  being aggregated.
+- The prefix set is unambiguous: no non-blank prefix is a prefix of another,
+  and at most one is blank.
+
+A rejected prefix is not quoted back in the error — the failure's location
+names the entry, which is enough to find it, and a value out of a file this
+application does not write is not repeated to be sure. The same posture as a
+`custom_providers` root, which reaches a message only through
+`UrlValidationError`.
 
 **A `Config` is read-only once `load_config` returns**, and there is no config
 hot-reload — nothing mutates one, nothing reloads one, and `serve` reads
@@ -162,10 +177,6 @@ a reload would cost that.
 authenticates, and written on every claim.** That is the whole of what makes
 `app revoke` take effect without a restart. Do not add a cache, an mtime check
 or a reload signal to it.
-
-`providers` is deliberately still a `list` (not a single `Provider` field) even
-though exactly one is enforced — that's the seam for the multi-provider
-version.
 
 **`load_config(path) -> Config`** reads TOML, warns if the file is
 group/other-accessible, and validates via `Config.model_validate(dict)`. Its
@@ -327,6 +338,55 @@ needing something from `create_app` takes it as a factory argument:
 `build_client_auth_dependency(store_path)` closes over the path, so `auth.py`
 reads no attribute and casts nothing, even though it lives in another module
 and has no closure over `create_app`'s locals.
+
+## Account id namespacing
+
+The account ids this aggregator exposes are each provider's own ids behind that
+provider's `prefix`. Nothing else in a body is rewritten: v1 scopes a
+transaction id's uniqueness to its account, so unique account ids make
+transaction ids unique transitively, and an `org` is identified by `domain` and
+`sfin-url`, which are global already — two providers reporting the same
+institution is correct rather than a collision.
+
+**A prefix is part of an account's identity to the client app.** Changing one
+is indistinguishable, from that side, from every account at that provider
+vanishing and a set of new ones appearing. Prefixes are as permanent as
+provider keys.
+
+The default, `f"{key}:"`, is prefix-free by construction: keys are unique and
+match `[a-z0-9-]+`, so no key plus a colon can be a prefix of another. An
+explicit prefix is constrained to `[A-Za-z0-9._:-]*`, because it travels in a
+URL query parameter and lands in the client app's database and nothing is
+gained by allowing whitespace or `%` in it.
+
+**The blank prefix is legal, and is the point of the field being
+overridable.** Someone already syncing straight from a provider, whose client
+app holds that provider's raw account ids, puts that provider behind this
+aggregator by setting `prefix = ""` for it. Any other value re-identifies every
+one of their accounts.
+
+Routing inverts the prefixing, so the set has to be unambiguous. `Config`
+validation keeps non-blank prefixes prefix-free — stricter than distinctness,
+since `bank` and `bank2` are distinct and still ambiguous — and allows at most
+one blank prefix, which could not satisfy prefix-freeness at all, being a
+prefix of everything. `resolve_provider_for_account` is then a longest-prefix
+match, which is also what makes the blank prefix a catch-all rather than a
+claim on every id: it matches every id and is shorter than any other match, so
+it answers only for the ids no other prefix claims. It must **never** fan out
+to ask each provider whether it knows an id — namespacing in the id itself is
+the only allowed mechanism, because generating no provider traffic beyond what
+the client app asks for is a hard constraint on this project.
+
+**The blank prefix is a knowingly leaky choice, and the leak is documented
+rather than defended against.** If the blank provider returns an id of its own
+beginning with another provider's prefix, that id routes to the wrong provider
+— which answers with nothing, having no such account — and it can collide
+outright with a real id from that provider. A prefix carrying a delimiter the
+providers' own ids do not contain avoids both, which is what the default has.
+A collision is detected in `merge`, which keeps both accounts and logs one line
+per colliding id naming the providers it came from: dropping one would lose the
+user's data to hide a configuration the operator chose, and a client app can do
+nothing with the news while the operator can change a prefix.
 
 ## Provider URL validation
 
@@ -503,26 +563,50 @@ app.accounts(request)
      build_client_auth_dependency; reads aggregator_creds.json in a threadpool on
      every request, 403 on missing, unknown or unreadable; 403 also on a
      record that has not claimed, which holds a token and not credentials)
+  -> _unsupported_versions(request)
+       - any "version" value outside {"1", "1.0"} -> 400, {"accounts": [], "errors": [...]}
   -> _get_app_state(request) -> provider_clients, request_counter
   -> _forwarded_accounts_params(request)
-       - keep only the six spec'd query keys (ACCOUNTS_FORWARDED_PARAMS)
-       - extract "account" values, run through unrewrite_ids() (no-op today),
-         rebuild the param list with them substituted back in
-  -> if any "account" values: resolve_provider_for_account() per id, dedupe by
-     provider key -> providers_to_query (today: always the sole provider)
-     else: providers_to_query = all configured providers
-  -> fetch_all(clients, providers_to_query, "/accounts", params, counter)
-       -> asyncio.gather over fetch() per provider, order preserved
+       - keep only v1's five query keys (ACCOUNTS_FORWARDED_PARAMS)
+  -> _route_requests(config, params) -> [(provider, that provider's params)]
+       - no "account" values: every provider, none given an "account" param
+       - otherwise: resolve_provider_for_account() per id -> owning provider and
+         provider-local id; one request per owning provider, in configured
+         order, carrying its own ids and the shared params
+       - an id no prefix claims: logged, routed nowhere, absent from the response
+  -> fetch_all(clients, requests, "/accounts", counter)
+       -> asyncio.gather over fetch() per request, order preserved
        -> fetch() never raises: httpx2.HTTPError -> ProviderFailure
        -> 3xx                                    -> ProviderFailure
-  -> merge([("", response) for response in responses]) -> MergedResponse
-  -> rewrite_ids(merged.body)   # no-op today
+  -> merge(zip(each request's provider.prefix, responses)) -> MergedResponse
   -> Response(body, 200, "application/json")
 ```
 
-The empty prefix is right while `Config` accepts one provider: a lone provider
-needs no namespace, and giving it one would re-identify every account the
-client app already holds.
+**No provider hears another's account ids.** An `account` filter names ids in
+one provider's namespace, so each queried provider is given only the ids that
+resolved to it, alongside the parameters the request shares
+(`start-date`, `end-date`, `pending`, `balances-only`). Requests are built by
+iterating the configured providers rather than the requested ids, so two client
+apps asking for the same accounts in different orders are answered in the same
+order.
+
+**`version` is neither forwarded nor ignored.** `1` and `1.0` are the two
+published spellings of what this server speaks — v1 names "1.0" in its own
+`/info` example, v2 introduces the parameter as a major-version prefix and says
+`1` for the earlier protocol — and every value is checked, so a repeated
+parameter cannot carry another past. Anything else is a 400 with a v1-shaped
+body, after client authentication and before any provider is contacted:
+answering a request that asked for something else in v1 anyway would be a
+silent lie about what the body is, and forwarding the parameter would be worse,
+since a provider that honoured `version=2` would put v2 shapes into a body this
+application merges as v1.
+
+**An id no prefix claims is the operator's news, not the client app's.** It is
+logged, naming the id, and nothing about it reaches the response: repeating it
+there would put a value from outside into a body another program displays, and
+an entry that withholds it is a bare count naming nothing a client app could
+act on. A request naming only unknown ids therefore queries no provider and
+answers 200 with an empty account set.
 
 `GET /simplefin/info` shares none of this. It answers `{"versions": ["1.0"]}`
 locally, contacting no provider: the version is a fact about the protocol this
@@ -547,13 +631,14 @@ contributing nothing, the same as any other way of failing.
   legitimate exception — it's a one-shot utility outside any request path).
 - One `AsyncClient` per provider, built once in the lifespan, closed once at
   shutdown. Never built per-request.
-- `fetch_all` always goes through `asyncio.gather`, even for today's single
-  provider: with one provider that is indistinguishable from a loop, with two
-  it is the whole point. Don't collapse it into a plain loop as a
-  "simplification" — that would silently break the concurrency guarantee the
-  moment a second provider is configured.
-- Output order from `fetch_all` matches the input `providers` order (gather
-  preserves order; this is relied on, not incidental).
+- `fetch_all` always goes through `asyncio.gather`, including for a
+  single-provider configuration: with one provider that is indistinguishable
+  from a loop, with two it is the whole point — one dead provider must not hold
+  the client app's request open for the length of the others' as well. Don't
+  collapse it into a plain loop as a "simplification".
+- Output order from `fetch_all` matches the input `requests` order (gather
+  preserves order; this is relied on, not incidental — it is what pairs each
+  response with the prefix `merge` puts on its accounts).
 - `RequestCounter` is passed explicitly into `fetch`/`fetch_all` rather than
   reached for as global/module state — it's shared across concurrent
   `fetch()` calls, but simple dict increments with no `await` in between are
@@ -646,12 +731,15 @@ before touching anything credential-adjacent:
    itself; that message is deliberately built for display, and its docstring
    says what it guarantees and where the guarantee stops. Provider response
    bodies are attacker-influenced. None of that text reaches an error message
-   this application writes, and the only provider-derived value that reaches a
-   log line is an account id, in `merge`'s collision warning, rendered with
-   `%r` so that a newline in one cannot forge a log line of its own. What
-   reaches the client app is deliberately much larger: every key inside
-   `accounts` survives the merge, and v1's `errors` strings are relayed
-   verbatim.
+   this application writes. Account ids are the exception that proves the rule:
+   two log lines render one, `merge`'s collision warning and the routing
+   warning for an id no prefix claims, the first provider-derived and the
+   second from the client app's query string. Both use `%r`, so that a newline
+   in an id cannot forge a log line of its own; neither reaches a message or a
+   response body. What reaches the client app is deliberately much larger:
+   every key inside `accounts` survives the merge, and v1's `errors` strings
+   are relayed verbatim. The strings this application writes into `errors`
+   itself are fixed text of its own — no id, no URL, no exception detail.
 
 **A dependency's own logging is outside all five.** `httpcore2` traces each
 exchange at DEBUG, including the exception it is about to raise, and a protocol
@@ -700,7 +788,10 @@ entry driving a real socket that hands back what it was sent.
   separate, human-run, and documented as such in the README.
 - **`tests/support.py`** holds the shared fixtures: `make_config` builds a
   `Config` through `model_validate(dict)`, the same path `load_config` uses
-  (direct kwargs trip up basedpyright on `SecretStr` fields);
+  (direct kwargs trip up basedpyright on `SecretStr` fields), from as many
+  `ProviderSpec`s as a test names — each one a key, a root, an optional
+  explicit prefix and the access URL the store will hold for it, spelled out
+  rather than derived so that a test meaning them to disagree can say so;
   `make_access_urls`/`make_app` supply `create_app`'s other arguments, and
   `make_app` takes a config *directory* so that a test can revoke an app
   mid-run and have the next request see it; `make_claimed_app` and
@@ -731,45 +822,22 @@ entry driving a real socket that hands back what it was sent.
 - **The access URL must share the claim URL's provider root.** The spec leaves
   that open; see "Provider URL validation".
 
-## Non-goals (for *this* version — don't build ahead of need)
+## Non-goals (don't build ahead of need)
 
-Explicitly out of scope until a real multi-provider version is undertaken:
-id namespacing, actual merge logic, partial-failure handling across
-providers, multi-provider config validation beyond "exactly one for now."
-The seams below exist so that version doesn't require an architectural
-rewrite — but do not fill them in speculatively.
-
-## Seams for the multi-provider future
-
-These functions/types are intentionally more general than today's
-single-provider behavior requires. When multi-provider work actually starts,
-these are where it goes — nowhere else should need to change:
-
-- **`resolve_provider_for_account(account_id, providers)`** — today: asserts
-  exactly one provider and returns it, ignoring `account_id` entirely.
-  Multi-provider: real id-namespacing-based ownership lookup. It must **never**
-  fan out to ask each provider to find an id — namespacing in the id itself is
-  the only allowed mechanism, because generating no provider traffic beyond
-  what the client app asks for is a hard constraint on this project.
-- **`rewrite_ids(body)` / `unrewrite_ids(account_ids)`** (`id_rewriting.py`)
-  — today: identity functions. Multi-provider: map between
-  provider-local ids and aggregator-global (namespaced) ids, in the response
-  body and in outbound `account` filter params respectively.
-- **`Config.providers`** — already `list[Provider]` with `max_length=1`;
-  multi-provider is raising that limit and building out the above, not a
-  schema change. The access URL store, the `provider_clients` dict and
-  `fetch_all` are all keyed by provider key already.
-- **`fetch_all`** — already fans out over an arbitrary-length provider list
-  via `asyncio.gather`; no change needed here at all when a second provider
-  is added. Deliberately already-done, and covered by tests using two providers
-  even though production config only ever has one today
-  (`tests/test_transport.py`).
-
-Note that `README.md` already describes the multi-provider behavior, showing
-two `[[providers]]` entries, while the code accepts exactly one. That gap is
-intentional; don't "fix" the docs to match the code. `config.toml` ships with a
-single entry, because it is a file the user copies and edits rather than an
-illustration.
+- **Two accounts at the same provider.** The access URL store keys on the
+  provider key, so one configured provider is one account at that provider.
+  Supporting more means an instance identifier distinct from the registry key,
+  which changes the store's shape and the claim menu.
+- **De-duplicating one real-world account reached through two providers.** It
+  appears twice, with two ids. Nothing in the protocol identifies it as one
+  account, and guessing is worse than not.
+- **Caching, retrying or coalescing proxied `/accounts` requests.** One client
+  app request produces at most one request per provider.
+- **Per-provider `start-date`/`end-date` rewriting**, partial-response
+  assembly, or any other cleverness about what to ask each provider for. The
+  client app's parameters go to every queried provider unchanged.
+- **`errlist`, `connections`, or any other v2 field**, inbound or outbound.
+- **Dereferencing an account's `currency` URL.**
 
 ## Known planned future work
 

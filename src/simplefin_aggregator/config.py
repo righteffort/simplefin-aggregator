@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
+from itertools import permutations
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit
 
 from platformdirs import user_config_dir
@@ -21,6 +23,13 @@ if TYPE_CHECKING:
 
 APP_NAME = "simplefin-aggregator"
 
+PREFIX_PATTERN = re.compile(r"[A-Za-z0-9._:-]*")
+"""What an account-id prefix may look like.
+
+A prefix travels in a URL query parameter and lands in the client app's
+database, so it is kept to characters that need no escaping in either.
+"""
+
 
 class ConfigError(Exception):
     """Raised when the config file is missing, malformed, or fails validation."""
@@ -33,6 +42,49 @@ class Provider(BaseModel):
     # provider everywhere: as the store's key, as the provider client dict's
     # key, and in log lines.
     key: str
+    # What this provider's account ids carry when the client app sees them, and
+    # what routes an inbound `?account=` back to this provider.
+    #
+    # A prefix is part of an account's identity to the client app: changing one
+    # is indistinguishable, from that side, from every account at this provider
+    # vanishing and a set of new ones appearing. It is as permanent as the key
+    # itself. The blank prefix is the point of the field being overridable --
+    # it is how someone already syncing straight from a provider keeps the
+    # account ids their client app already holds.
+    prefix: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_prefix_to_the_key(cls, data: object) -> object:
+        """Default the prefix to `f"{key}:"`, leaving an explicit blank one alone.
+
+        Filled in here rather than as a field default because a blank prefix is
+        a legal, meaningful value, so "absent" and "empty" have to stay
+        distinguishable. The default is prefix-free by construction: keys are
+        unique and match `[a-z0-9-]+`, so no key plus ":" can be a prefix of
+        another.
+        """
+        if not isinstance(data, dict):
+            return data
+        entry = cast("dict[str, object]", data)
+        key = entry.get("key")
+        if "prefix" in entry or not isinstance(key, str):
+            return entry
+        return {**entry, "prefix": f"{key}:"}
+
+    @field_validator("prefix")
+    @classmethod
+    def _validate_prefix(cls, value: str) -> str:
+        """Constrain a prefix without quoting the rejected one back.
+
+        The entry it belongs to is named by the validation failure's location,
+        which is enough to find it, and a value out of a file this application
+        does not write is not repeated to be sure.
+        """
+        if not PREFIX_PATTERN.fullmatch(value):
+            msg = f"a provider prefix must match {PREFIX_PATTERN.pattern}"
+            raise ValueError(msg)
+        return value
 
 
 def _parse_root_or_value_error(raw: str) -> NormalizedUrl:
@@ -89,9 +141,7 @@ class Config(BaseModel):
 
     bind_host: str = "127.0.0.1"
     bind_port: int = 8080
-    # Schema and internal types are already a list for the multi-provider version to come;
-    # this version only supports exactly one.
-    providers: list[Provider] = Field(min_length=1, max_length=1)
+    providers: list[Provider] = Field(min_length=1)
     custom_providers: list[CustomProvider] = []
     base_url: str
 
@@ -101,14 +151,50 @@ class Config(BaseModel):
 
     @model_validator(mode="after")
     def _check_provider_keys(self) -> Config:
-        """Fail at load time on a key no provider defines.
+        """Fail at load time on a key no provider defines, or on one named twice.
 
         Checked here rather than at first use so that a dangling reference is
         reported by every command, not just the one that would dereference it.
+
+        A repeated key is rejected because everything per-provider is keyed by
+        it -- the access URL store, the provider client dict, the request
+        counter -- so two entries sharing one would silently collapse into a
+        single provider rather than being aggregated.
         """
         entries = self.provider_entries()
+        seen: set[str] = set()
         for provider in self.providers:
             _ = find_provider(entries, provider.key)
+            if provider.key in seen:
+                msg = f"provider key {provider.key!r} appears more than once in providers"
+                raise ValueError(msg)
+            seen.add(provider.key)
+        return self
+
+    @model_validator(mode="after")
+    def _check_provider_prefixes(self) -> Config:
+        """Keep the prefix set unambiguous, so an inbound account id has one owner.
+
+        Routing an account id back to the provider that issued it is a
+        longest-prefix match, which answers unambiguously only if no non-blank
+        prefix is a prefix of another -- a stricter rule than distinctness,
+        since `bank` and `bank2` are distinct and still ambiguous. The blank
+        prefix cannot satisfy it at all, being a prefix of everything, so it is
+        allowed once and serves as the catch-all.
+        """
+        blank = [provider.key for provider in self.providers if not provider.prefix]
+        if len(blank) > 1:
+            named = ", ".join(repr(key) for key in blank)
+            msg = f"at most one provider may have a blank prefix; {named} all do"
+            raise ValueError(msg)
+        named_prefixes = [provider for provider in self.providers if provider.prefix]
+        for one, other in permutations(named_prefixes, 2):
+            if other.prefix.startswith(one.prefix):
+                msg = (
+                    f"provider {one.key!r}'s prefix is a prefix of provider {other.key!r}'s, "
+                    "so an account id would not say which of them it came from"
+                )
+                raise ValueError(msg)
         return self
 
     @field_validator("base_url")
