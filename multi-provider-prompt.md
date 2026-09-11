@@ -380,7 +380,7 @@ This removes the last caller of `merge` that is not `/accounts`.
   prefix field with its default, and the "set `prefix = \"\"` for the provider
   you already sync from" instruction, which is the one thing an existing user
   must know before upgrading.
-- `TODO.md`: drop what this task completes; record two accounts at the same
+- `docs/TODO.md`: drop what this task completes; record two accounts at the same
   provider as still out of scope.
 - `docs/ARCHITECTURE.md`: the "identity function" purpose paragraph, the
   non-goals section and the entire "seams for the multi-provider future"
@@ -393,7 +393,7 @@ Do not build these.
 - **Two accounts at the same provider.** The access URL store keys on the
   provider key, so one configured provider is one account at that provider.
   Supporting more means an instance identifier distinct from the registry key,
-  which changes the store's shape and the claim menu. Note it in `TODO.md`;
+  which changes the store's shape and the claim menu. Note it in `docs/TODO.md`;
   do not build it.
 - **De-duplicating the same real-world account reached through two
   providers.** It appears twice, with two ids. Nothing in the protocol
@@ -484,7 +484,7 @@ probe.
 - user-facing documentation: `README.md` (the two-provider example,
   prefixes and their permanence, the blank-prefix instruction and its
   hazard), `config.toml`, `scripts/manual_verify.py`
-- developer-facing: `TODO.md`, and `docs/ARCHITECTURE.md`: the deleted
+- developer-facing: `docs/TODO.md`, and `docs/ARCHITECTURE.md`: the deleted
   modules, the id-namespacing scheme, the routing rules, the `version`
   rejection, the last-seen accounts as a further piece of on-disk state with
   its own risk profile, and the retry asymmetry between the probe and
