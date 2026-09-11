@@ -97,9 +97,11 @@ wrong provider (which answers with nothing, since it has no such account), and
 it can collide outright with a real id from that provider. Both are avoided by
 giving prefixes a delimiter the providers' own ids do not contain, which the
 default does. Detect a collision — a duplicate id in the merged accounts list
-— and report it as a trailing error entry plus a log line, but keep both
-accounts: dropping one loses data to protect the client from a config the
-operator chose.
+— and keep both accounts: dropping one loses data to protect the client from a
+config the operator chose. **Log it and do not reflect in the errors list.** A
+collision is the operator's to fix by changing a prefix, and a client app can do
+nothing with the news; one log line per colliding id, listing the providers it
+came from.
 
 ### Routing a request
 
@@ -166,15 +168,32 @@ a different pair of principals. Provider-side failure is reported in the
 does when one of its bank connections breaks. This deletes the current
 `status=502` path and its tests.
 
-**A provider contributes either a usable body or errors, never both.** A
-response is usable when it is HTTP 200 whose body parses as a JSON object
-with an `accounts` array of objects each carrying a string `id`, and an
-`errors` array of strings if present at all. Anything else — a transport
-failure, a 3xx, a 402, a 403, a 500, a body that is not JSON, an `accounts`
-entry with no string `id` — is that provider failing, handled uniformly by
-the error synthesis below. Being strict here is safe: an account whose id
-could not be prefixed must not reach the client unprefixed, because an
-unprefixed id misroutes on the way back.
+**Either this aggregator takes a provider's body, or that provider
+contributes nothing to the response — never both.** Taking the body means
+taking its accounts *and* its `errors` together: a provider that reached three
+of its banks and failed on a fourth reports exactly that, in one body, and both
+halves come through.
+
+A response is usable when it is HTTP 200 whose body parses as a JSON object
+with an `accounts` array of objects each carrying a string `id`. Anything else
+— a transport failure, a 3xx, a 402, a 403, a 500, a body that is not JSON, an
+`accounts` entry with no string `id` — is that provider failing, handled
+uniformly. One bad account fails the whole provider rather than being skipped,
+so the client app hears that the provider did not sync instead of watching an
+account silently disappear.
+
+**The only synthesized error worth putting in the body is D1's**, one per
+account remembered from a failed provider's last successful sync, naming the
+institution the user has to go and fix. A bare string saying a provider could
+not be reached names nothing a client app can act on, so until D1 a failure is
+logged and contributes nothing to the response. That leaves a real gap between
+this step and D1 — a dead provider answers 200 with an empty account set and
+says nothing about why — and D1 closes it.
+
+**An unreadable `errors` costs the error messages and nothing else.** If
+`errors` is present but is not an array of strings, keep the accounts — they
+are real data — and log the messages away. Withholding a provider's accounts
+over an unreadable diagnostic beside them is the more expensive mistake.
 
 **Order is deterministic and follows the configured provider order**, never
 the order the providers happened to answer in.
@@ -182,9 +201,8 @@ the order the providers happened to answer in.
 - `accounts`: each provider's accounts in turn, in configured order, each
   provider's own order preserved within its run.
 - `errors`: for each provider in configured order, that provider's own
-  `errors` strings passed through verbatim, or — if it failed — the
-  synthesized entries described below. Then, at the end, the errors that
-  belong to no provider: unknown account ids, id collisions.
+  `errors` strings passed through verbatim, or — once D1 lands — the
+  synthesized entries described below.
 
 **What is preserved.** The byte-identity guarantee is gone, and there is no
 single-provider fast path to preserve it: a fast path would leave the merge
@@ -274,10 +292,9 @@ a store shaped around one answer would have to be rewritten for the other.
 > relevant point in the code.
 
 **When a provider has nothing remembered** — never yet reached, or a fresh
-install — synthesize one generic entry naming the provider and saying no
-accounts have been retrieved from it yet. Most client apps will ignore it.
-That is acceptable, and is what the claim-time probe below exists to make
-rare.
+install — do not produce any error entries for the provider, only issue a log
+line naming the provider and saying no accounts have been retrieved from it yet.
+That is acceptable, and is what the claim-time probe below exists to make rare.
 
 **Error text carries no URLs.** The detail clause is this application's own
 vocabulary keyed by provider key — `"simplefin-aggregator could not reach
@@ -293,7 +310,7 @@ keep the body's strings stable and free of anything a URL could ride in on.
 
 1. populate `provider_accounts.json` for that provider, so a provider that is
    down the first time the client app syncs still produces a useful error; and
-2. tell the user, at the moment they are set up to act on it, that the
+2. tell the user, at the moment they are set up to act on it, if the
    credentials they just claimed do not actually work.
 
 **A failed probe is a warning, not a failure: report it and exit 0.** The
@@ -302,10 +319,10 @@ re-claimed. Exiting non-zero would invite the user to re-run a command that
 can no longer succeed.
 
 **The probe retries; the claim POST never does.** The probe is an idempotent
-GET, so a transient failure there should not cost the user a useful setup
-step: three attempts with exponential backoff, an explicit per-attempt
-timeout, and the whole thing bounded to roughly thirty seconds so a dead
-provider does not turn `claim` into a hang.
+GET, so a transient failure there should not cost the user a useful setup step:
+three attempts with exponential backoff, an explicit per-attempt timeout, and
+the whole thing bounded to roughly ten seconds so a dead provider does not turn
+`claim` into a hang; display some form of progress to the user.
 
 **The claim POST is not idempotent and gets exactly one attempt.** If the
 request reached the provider, the token may already be spent, and an automatic
@@ -420,6 +437,9 @@ Do not build these.
 Each step is a review-cycle unit as `AGENTS.md` describes, and lands as one
 commit.
 
+**Stop after A.** Step B begins in a new session, not in the one that lands A.
+A session that finishes A records what it left behind here and ends.
+
 **C runs first.** `/info` is a caller of `merge`, and an `/info` body is not an
 accounts body: the moment `merge` enforces the usable/unusable rule below,
 `{"versions": ["1.0"]}` becomes "that provider failed" and `/info` answers with
@@ -465,11 +485,12 @@ probe.
   prefixes and their permanence, the blank-prefix instruction and its
   hazard), `config.toml`, `scripts/manual_verify.py`
 - developer-facing: `TODO.md`, and `docs/ARCHITECTURE.md`: the deleted
-  and rewritten modules, the id-namespacing scheme, the routing and
-  merging rules, the always-200 contract, `/info` answering locally,
-  the `version` rejection, the last-seen accounts as a further piece
-  of on-disk state with its own risk profile, and the retry asymmetry
-  between the probe and everything else.
+  modules, the id-namespacing scheme, the routing rules, the `version`
+  rejection, the last-seen accounts as a further piece of on-disk state with
+  its own risk profile, and the retry asymmetry between the probe and
+  everything else. A lands the rest — the rewritten `merge.py`, the merging
+  rules, the always-200 contract and `/info` answering locally are described
+  there already.
 - agent-facing: `AGENTS.md` update to reflect any learnings/memories from the
   session. If you make changes here, do not blindly append, synthesize
   an improved file that stands on its own.
@@ -481,13 +502,17 @@ Merging and ordering:
 - Two providers each returning accounts: the merged `accounts` are in
   configured provider order, each provider's own order preserved, every id
   carrying its provider's prefix.
+- A provider returning both accounts and `errors` contributes both.
 - Each provider's own `errors` strings appear in configured provider order,
   and aggregator-level errors come after all of them.
+- An `errors` field that is not an array of strings leaves that provider's
+  accounts intact and drops only the messages.
 - A provider returning 200 with an unparseable body, an `accounts` entry with
   no string `id`, a 402, a 403, a 3xx, and a transport failure: each is
   treated identically as that provider failing, and the other provider's
   accounts still come through with status 200.
-- Every provider failing: status 200, empty `accounts`, populated `errors`.
+- Every provider failing: status 200 and a well-formed body; `errors` stays
+  empty until D1 has something to say in it.
 - Unknown keys inside an account survive the round trip; `errlist` and
   `connections` sent by a provider do not appear in the response.
 
@@ -510,7 +535,8 @@ Routing:
 - All ids unknown: no provider is queried, response is 200 with empty
   accounts.
 - A blank-prefix provider and another provider producing the same merged id:
-  both accounts are returned and a collision error is reported.
+  both accounts are returned, `errors` is untouched, and the collision is
+  logged naming both providers.
 
 The last-seen accounts and the probe:
 
