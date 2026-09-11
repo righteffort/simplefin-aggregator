@@ -53,9 +53,7 @@ codebase than the proxying does.
 | `request_counter.py` | `RequestCounter`: per-provider daily request counts, logged for observability only, never used as a control. |
 | `access_log.py` | Generic uvicorn-access-log redaction utility. Knows nothing about SimpleFIN or claim tokens — `app.py`/`cli.py` supply what to redact. |
 
-`tests/support.py` holds shared test helpers (`ProviderSpec`, `make_config`,
-`make_access_urls`, `make_app`, `install_provider_transport`) used across most
-test files.
+`tests/support.py` holds shared test helpers used across multiple test files.
 
 ## On-disk state
 
@@ -368,14 +366,8 @@ one of their accounts.
 Routing inverts the prefixing, so the set has to be unambiguous. `Config`
 validation keeps non-blank prefixes prefix-free — stricter than distinctness,
 since `bank` and `bank2` are distinct and still ambiguous — and allows at most
-one blank prefix, which could not satisfy prefix-freeness at all, being a
-prefix of everything. `resolve_provider_for_account` is then a longest-prefix
-match, which is also what makes the blank prefix a catch-all rather than a
-claim on every id: it matches every id and is shorter than any other match, so
-it answers only for the ids no other prefix claims. It must **never** fan out
-to ask each provider whether it knows an id — namespacing in the id itself is
-the only allowed mechanism, because generating no provider traffic beyond what
-the client app asks for is a hard constraint on this project.
+one blank prefix. `resolve_provider_for_account` is then a longest-prefix
+match.
 
 **The blank prefix is a knowingly leaky choice, and the leak is documented
 rather than defended against.** If the blank provider returns an id of its own
