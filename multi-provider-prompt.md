@@ -437,15 +437,16 @@ Do not build these.
 Each step is a review-cycle unit as `AGENTS.md` describes, and lands as one
 commit.
 
-**Stop after A.** Step B begins in a new session, not in the one that lands A.
-A session that finishes A records what it left behind here and ends.
+**Status: C and A are landed** on `dev-multi` — `e8b34f2` answers `/info`
+locally, `2331774` is the merge rewrite. C ran before A because `/info` was a
+caller of `merge`, and an `/info` body is not an accounts body: once `merge`
+enforced the usable/unusable rule below, `{"versions": ["1.0"]}` would have
+read as a failed provider. **What remains is B, then D1, D2, E.**
 
-**C runs first.** `/info` is a caller of `merge`, and an `/info` body is not an
-accounts body: the moment `merge` enforces the usable/unusable rule below,
-`{"versions": ["1.0"]}` becomes "that provider failed" and `/info` answers with
-an empty account set. Answering `/info` locally is what makes A's claim true
-that only a provider's non-200 changes. So the order is **C, A, B, D1, D2, E**;
-C depends on nothing and A depends on C.
+Decisions those two steps settled are recorded in place below, in the sections
+they govern: the `version` spelling, collisions being logged rather than
+reported, an unreadable `errors` costing only the messages, and no synthesized
+provider-failure error before D1.
 
 **A. Merge several responses.** Rewrite `merge` and its tests: concatenation,
 prefixing, the deterministic order, the usable/unusable rule, always-200,
