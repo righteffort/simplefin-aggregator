@@ -231,11 +231,8 @@ access URL is stored and valid; the setup token is spent and cannot be
 re-claimed. Exiting non-zero would invite the user to re-run a command that
 can no longer succeed.
 
-**The probe retries; the claim POST never does.** The probe is an idempotent
-GET, so a transient failure there should not cost the user a useful setup step:
-three attempts with exponential backoff, an explicit per-attempt timeout, and
-the whole thing bounded to roughly ten seconds so a dead provider does not turn
-`claim` into a hang; display some form of progress to the user.
+**The probe makes one attempt, with an explicit timeout**, so a dead provider
+does not turn `claim` into a hang. No retry.
 
 **The claim POST is not idempotent and gets exactly one attempt.** If the
 request reached the provider, the token may already be spent, and an automatic
@@ -250,8 +247,6 @@ Decided: do not pass `retries=0`, as it is the default and adds no value.
 
 **Nothing on the proxied `/accounts` path retries, backs off, or caches.** One
 client request produces at most one request per provider, as it does today.
-Say so in a comment beside the probe's retry loop, since that is where a
-reader will wonder why the two differ.
 
 ### `/info`
 
@@ -344,12 +339,10 @@ Do not build these.
 Each step is a review-cycle unit as `AGENTS.md` describes, and lands as one
 commit.
 
-**Status: C, A and B are landed** on `dev-multi` — `e8b34f2` answers `/info`
-locally, `2331774` is the merge rewrite, and B configures and routes several
-providers. C ran before A because `/info` was a caller of `merge`, and an
-`/info` body is not an accounts body: once `merge` enforced the usable/unusable
-rule below, `{"versions": ["1.0"]}` would have read as a failed provider.
-**What remains is D and E.**
+**Status: C, A, B, and D are landed** on `dev-multi`. C ran before A because
+`/info` was a caller of `merge`, and an `/info` body is not an accounts body:
+once `merge` enforced the usable/unusable rule below, `{"versions": ["1.0"]}`
+would have read as a failed provider.  **What remains is E.**
 
 Decisions those steps settled are recorded in place below, in the sections they
 govern: `version` being ignored, collisions being logged rather than reported,
@@ -376,9 +369,8 @@ step updated it.
 worth its own review rather than a footnote to B.
 
 **D. The claim probe.** `claim` fetches `balances-only=1` after storing the
-access URL, and warns on failure without failing. It brings the probe's retry
-loop with it, and the comment beside that loop saying why the proxied path has
-none.
+access URL, and warns on failure without failing. One attempt, with a timeout
+bounding it; no retry.
 
 **E. Documentation.** 
 - user-facing documentation: `README.md` (the two-provider example,
