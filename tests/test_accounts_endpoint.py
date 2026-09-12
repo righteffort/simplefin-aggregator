@@ -376,62 +376,29 @@ def test_a_blank_prefix_provider_may_collide_with_another_without_losing_an_acco
     assert "bank-b" in caplog.text
 
 
-ACCEPTED_VERSIONS = ["1", "1.0"]
-
-# Every other value names a protocol this server does not implement -- including
-# "1.0.7", which would name a fix release this application makes no claim about.
-REFUSED_VERSIONS = ["2", "2.0", "1.0.7", "", "one"]
+VERSIONS = ["1", "1.0", "2", "1.0.7", "", "one"]
 
 
-def test_only_the_version_this_server_speaks_is_answered(tmp_path: Path) -> None:
-    """Requirement: v1 and v1 only, in either published spelling, and never forwarded.
+def test_a_version_a_client_app_asks_for_changes_nothing(tmp_path: Path) -> None:
+    """Requirement: v1 is the only protocol spoken in either direction, so nothing selects one.
 
-    v1 names "1.0" in its own /info example; v2 introduces the parameter as a
-    major-version prefix and says "1" for the earlier protocol, so both name
-    what this server speaks. Answering anything else in v1 would be a silent
-    lie about what the body is, and forwarding the parameter would be worse: a
-    provider that honoured it would put v2 shapes into a body merged as v1.
-
-    Accepted and refused are asked here together because what makes the
-    accepted ones meaningful is that the same URL, spelled with another value,
-    is refused.
+    Whatever a client app asks for it is answered in v1, and no provider sees
+    the parameter: one that honoured a forwarded `version=2` could answer in a
+    protocol this application does not parse.
     """
     with _aggregating(tmp_path) as (client, auth, calls):
         answered = [
-            client.get(f"/simplefin/accounts?version={version}", auth=auth)
-            for version in ACCEPTED_VERSIONS
-        ]
-        refused = [
-            client.get(f"/simplefin/accounts?version={version}", auth=auth)
-            for version in REFUSED_VERSIONS
+            client.get(f"/simplefin/accounts?version={version}&version=9", auth=auth)
+            for version in VERSIONS
         ]
 
-    assert [response.status_code for response in answered] == [HTTPStatus.OK] * len(
-        ACCEPTED_VERSIONS
+    assert [response.status_code for response in answered] == [HTTPStatus.OK] * len(VERSIONS)
+    assert [response.json() for response in answered] == [{"accounts": [], "errors": []}] * len(
+        VERSIONS
     )
-    assert [response.status_code for response in refused] == [HTTPStatus.BAD_REQUEST] * len(
-        REFUSED_VERSIONS
+    assert calls == {"bank-a": [[]] * len(VERSIONS), "bank-b": [[]] * len(VERSIONS)}, (
+        "every request reached both providers, none of them carrying a version"
     )
-    assert calls == {
-        "bank-a": [[]] * len(ACCEPTED_VERSIONS),
-        "bank-b": [[]] * len(ACCEPTED_VERSIONS),
-    }, "an accepted version is not forwarded, and a refused one reaches no provider at all"
-    for response in refused:
-        assert response.json() == {
-            "accounts": [],
-            "errors": ["simplefin-aggregator implements SimpleFIN protocol version 1.0 only."],
-        }, "refused in the one shape this server has"
-
-
-def test_every_version_value_is_checked_and_not_just_the_first(tmp_path: Path) -> None:
-    """Requirement: a repeated parameter cannot carry an unsupported version past the check."""
-    with _aggregating(tmp_path) as (client, auth, calls):
-        supported = client.get("/simplefin/accounts?version=1&version=1.0", auth=auth)
-        mixed = client.get("/simplefin/accounts?version=1&version=2", auth=auth)
-
-    assert supported.status_code == HTTPStatus.OK
-    assert mixed.status_code == HTTPStatus.BAD_REQUEST
-    assert calls == {"bank-a": [[]], "bank-b": [[]]}, "only the supported request was forwarded"
 
 
 def test_a_provider_that_fails_is_asked_once_and_costs_only_its_own_accounts(

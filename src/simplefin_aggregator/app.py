@@ -44,27 +44,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Exactly v1's query parameters. `version` is not among them: this aggregator
-# speaks 1.0 upstream whatever the client app asks for, and a provider that
-# honoured a forwarded `version=2` would put v2 shapes into bodies merged as
-# v1.
+# v1's five. `version` is absent deliberately: a provider that honoured a
+# forwarded one could answer in a protocol this application does not parse.
 ACCOUNTS_FORWARDED_PARAMS = frozenset(
     {"start-date", "end-date", "pending", "account", "balances-only"}
 )
 
-# The protocol version this application supports for clients.
+# The protocol version this application supports for clients. A `version` a
+# client app sends is ignored.
 PROTOCOL_VERSION = "1.0"
-
-# The two spellings of that one version. v1 defines no `version` parameter and
-# names "1.0" in its /info example; v2 introduces the parameter as a
-# major-version prefix, "1" for the earlier protocol. Both name what this
-# server speaks. Nothing longer does: "1.0.7" would name a fix release this
-# application makes no claim about.
-ACCEPTED_PROTOCOL_VERSIONS = frozenset({"1", PROTOCOL_VERSION})
-
-UNSUPPORTED_VERSION_ERROR = (
-    f"simplefin-aggregator implements SimpleFIN protocol version {PROTOCOL_VERSION} only."
-)
 
 # The path segment before {token}. Also used to redact the claim token from
 # uvicorn's access log (see access_log.py) -- keeping both derived from this
@@ -135,20 +123,6 @@ def _resolve_access_url(
     return validate_access_url(entry.root, stored.get_secret_value(), provider=key)
 
 
-def _unsupported_versions(request: Request) -> list[str]:
-    """Find the `version` values the request asked for that this server cannot answer in.
-
-    Every value is checked rather than one, because a repeated parameter that
-    named a version this server does not speak would otherwise be answered in
-    v1 anyway, which is a silent lie about what the body is.
-    """
-    return [
-        value
-        for key, value in request.query_params.multi_items()
-        if key == "version" and value not in ACCEPTED_PROTOCOL_VERSIONS
-    ]
-
-
 def _forwarded_accounts_params(request: Request) -> list[tuple[str, str]]:
     """Narrow the client app's query parameters to the ones v1 defines."""
     return [
@@ -161,19 +135,7 @@ def _forwarded_accounts_params(request: Request) -> list[tuple[str, str]]:
 def _route_requests(
     config: Config, params: Sequence[tuple[str, str]]
 ) -> list[tuple[Provider, Sequence[tuple[str, str]]]]:
-    """Split one client request into the per-provider requests that answer it.
-
-    Without an `account` filter that is every configured provider, asked
-    without one -- the endpoint means every account this server knows about.
-    With one it is only the providers owning the ids named, each given its own
-    ids and the parameters they all share.
-
-    An id no prefix claims is dropped and logged, and nothing about it reaches
-    the response. Reporting it would mean either repeating an id that came from
-    outside back into a body another program displays, or a bare count, which
-    names nothing a client app could act on -- and `errors` is the channel for
-    news the user can do something about.
-    """
+    """Split one client request into the per-provider requests that answer it."""
     shared = [(key, value) for key, value in params if key != "account"]
     account_ids = [value for key, value in params if key == "account"]
     if not account_ids:
@@ -188,9 +150,8 @@ def _route_requests(
             continue
         provider, provider_account_id = resolved
         owned[provider.key].append(provider_account_id)
-    # Iterating the configured providers rather than the ids, so that two
-    # client apps asking for the same accounts in different orders are answered
-    # in the same order.
+    # Iterating in configured provider order so that the order of accounts in
+    # the response is consistent, regardless of the order in the request.
     return [
         (provider, [*shared, *(("account", account_id) for account_id in owned[provider.key])])
         for provider in config.providers
@@ -251,15 +212,6 @@ def create_app(
 
     @app.get("/simplefin/accounts", dependencies=[Depends(require_client_auth)])
     async def accounts(request: Request) -> Response:  # pyright: ignore [reportUnusedFunction]
-        if _unsupported_versions(request):
-            # Answered in v1's shape even though v1 is what the client app said
-            # it did not want: it is the only shape this server has, and the
-            # status is what says the request was refused.
-            return JSONResponse(
-                {"accounts": [], "errors": [UNSUPPORTED_VERSION_ERROR]},
-                status_code=HTTPStatus.BAD_REQUEST,
-            )
-
         state = _get_app_state(request)
         requests = _route_requests(config, _forwarded_accounts_params(request))
 

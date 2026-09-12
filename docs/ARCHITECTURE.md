@@ -557,11 +557,11 @@ app.accounts(request)
      build_client_auth_dependency; reads aggregator_creds.json in a threadpool on
      every request, 403 on missing, unknown or unreadable; 403 also on a
      record that has not claimed, which holds a token and not credentials)
-  -> _unsupported_versions(request)
-       - any "version" value outside {"1", "1.0"} -> 400, {"accounts": [], "errors": [...]}
   -> _get_app_state(request) -> provider_clients, request_counter
   -> _forwarded_accounts_params(request)
-       - keep only v1's five query keys (ACCOUNTS_FORWARDED_PARAMS)
+       - keep only v1's five query keys (ACCOUNTS_FORWARDED_PARAMS); a
+         "version" a client app sends is ignored, as v1 is the only supported
+         version
   -> _route_requests(config, params) -> [(provider, that provider's params)]
        - no "account" values: every provider, none given an "account" param
        - otherwise: resolve_provider_for_account() per id -> owning provider and
@@ -583,17 +583,6 @@ resolved to it, alongside the parameters the request shares
 iterating the configured providers rather than the requested ids, so two client
 apps asking for the same accounts in different orders are answered in the same
 order.
-
-**`version` is neither forwarded nor ignored.** `1` and `1.0` are the two
-published spellings of what this server speaks — v1 names "1.0" in its own
-`/info` example, v2 introduces the parameter as a major-version prefix and says
-`1` for the earlier protocol — and every value is checked, so a repeated
-parameter cannot carry another past. Anything else is a 400 with a v1-shaped
-body, after client authentication and before any provider is contacted:
-answering a request that asked for something else in v1 anyway would be a
-silent lie about what the body is, and forwarding the parameter would be worse,
-since a provider that honoured `version=2` would put v2 shapes into a body this
-application merges as v1.
 
 **An id no prefix claims is the operator's news, not the client app's.** It is
 logged, naming the id, and nothing about it reaches the response: repeating it
