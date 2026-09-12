@@ -138,11 +138,7 @@ def merge(results: Sequence[tuple[str, ProviderResponse]]) -> MergedResponse:
         key = response.provider_name
         contributed = _accounts_and_errors(response, prefix)
         if contributed is None:
-            # TODO(claude): step D1 generates the errors for this provider here,
-            # one per account remembered from its last successful sync, naming
-            # the institution the user has to go and fix. That is the only error
-            # worth synthesizing; until then a failure is logged and nothing is
-            # put in the response.
+            # TODO(#4): Include an entry in errors for each of the provider's last seen accounts.
             continue
 
         provider_accounts, provider_errors = contributed

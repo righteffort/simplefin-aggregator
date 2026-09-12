@@ -15,9 +15,11 @@ A server that speaks the SimpleFIN Bridge protocol to a client app
 (Actual Budget is the motivating example, but it's generic) and proxies one or
 more SimpleFIN providers behind it. `GET /simplefin/accounts` answers 200, or
 403 for a client authentication failure, and nothing else: a provider's own
-failure is reported in v1's `errors` array rather than in this server's status,
-because 403 here is a statement about the client app's credentials and a
-provider's is about a different pair of principals. The accounts of every
+status is never reflected in this server's, because 403 here is a statement
+about the client app's credentials and a provider's is about a different pair
+of principals. What a provider itself reports in v1's `errors` array is
+relayed there, and what a provider's failure costs is that provider's
+accounts rather than the whole response. The accounts of every
 configured provider are presented as one set, each account id behind its
 provider's prefix — see "Account id namespacing" for the scheme and the
 routing that inverts it.
