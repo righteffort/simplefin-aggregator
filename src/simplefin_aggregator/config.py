@@ -287,8 +287,8 @@ def load_config(path: Path) -> Config:
     except ValidationError as exc:
         # The same rendering the state files use, for the same reason: a
         # provider root can carry userinfo, and pydantic's own rendering would
-        # quote it back. Nothing here is exempt because this file no longer
-        # holds credentials -- a root in it still does.
+        # quote it back. That this file is not meant to hold credentials exempts
+        # nothing -- a root in it still can.
         msg = f"invalid config in {path}:\n{describe_validation_failure(_ConfigModel, exc)}"
         raise ConfigError(msg) from None
     except (ConfigCheckError, ProviderRegistryError) as exc:

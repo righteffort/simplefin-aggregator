@@ -10,8 +10,19 @@ base_url = "http://127.0.0.1:8080"
 
 # The providers to aggregate, by key. Built-in keys: simplefin-bridge,
 # lunchflow, redbark.
+#
+# Your client app sees each account's id with the provider's `prefix` in front,
+# defaulting to "<key>:". Changing the prefix for a provider later will make
+# all of its accounts appear to be new.
+#
+# If your client app already syncs straight from a provider, set its prefix = ""
+# so that your app continues to see its accounts unchanged.
 [[providers]]
 key = "simplefin-bridge"
+prefix = ""
+
+# [[providers]]
+# key = "lunchflow"
 
 # Providers the built-in list does not name.
 #

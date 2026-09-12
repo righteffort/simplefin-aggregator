@@ -6,8 +6,11 @@ data from one or more SimpleFIN providers. It is intended for use by a
 personal finance app -- Actual Budget is the motivating example, but
 any personal finance app that supports SimpleFIN will work.
 
-It fans out to the providers you configure and merges their responses,
-passing each provider's data through unchanged.
+As needed it makes requests to the providers you configure and merges their
+answers into one, so your client app sees the accounts at all of them as if they
+came from a single provider. The transaction data from each provider is
+forwarded as is, other than to adjust account ids in order to prevent collisions
+between providers (see [Account ids and prefixes](#account-ids-and-prefixes)).
 
 ## Setup
 
@@ -89,6 +92,34 @@ interface. The same goes double for the directory it sits in: a directory
 another local user can write lets them replace the files this application
 depends on, and every command that writes there will warn you about it.
 
+#### Account ids and prefixes
+
+Your client app knows each account by an id: the provider's own id for it, with
+that provider's `prefix` in front. The prefix defaults to the key followed by a
+colon, so an account SimpleFIN Bridge calls `ACT-123` reaches your client app as
+`simplefin-bridge:ACT-123`. You may set one explicitly with `prefix`, using only
+letters, digits, `.`, `_`, `:` and `-`:
+
+```toml
+[[providers]]
+key = "simplefin-bridge"
+prefix = ""                # see below
+
+[[providers]]
+key = "lunchflow"          # no prefix given, so "lunchflow:"
+```
+
+**A prefix is part of every account's identity, and is as permanent as the
+key.** Your client app remembers accounts by id. Change a provider's prefix
+later — or its key, while the prefix is the default — and to your client app
+every account at that provider vanishes and a set of new, unrelated ones
+appears.
+
+**If your client app already uses a provider directly, set `prefix = ""` for
+that provider before pointing the app at this aggregator,** so that the account
+ids are unchanged when using the aggregator. Only one provider may have a blank
+prefix.
+
 ### 2. Claim a SimpleFIN setup token
 
 For each of your providers: Get a one-time-use setup token, then:
@@ -102,6 +133,10 @@ stores that in `provider_creds.json` in the config directory. It asks which
 provider the token came from unless `--provider <key>` tells it. Naming the
 wrong provider is an error rather than a guess: the access URL a provider
 returns has to sit under the root that key names.
+
+If the claim request fails, you will need to retry. First, try running `claim`
+again with the same token. If the token is still valid, you're done. If it is
+not, you should revoke it at the provider, and obtain a new one.
 
 The prompt hides what you type. To run `claim` without a terminal, redirect a
 file instead:
@@ -182,13 +217,14 @@ install a digest of a credential they chose.
 
 ## Endpoints
 
+These are typically used directly by a client app such as Actual Budget; as an
+end user you can ignore this sction.
+
   - `POST /simplefin/claim/{token}` — spends a setup token once, returning an
     access URL. `403` if the token was never issued or has already been
     claimed; the two are deliberately indistinguishable.
   - `GET /simplefin/accounts` — requires HTTP Basic Auth with the credentials
-    one claim issued; proxies to the configured provider, forwarding
-    `start-date`, `end-date`, `pending`, `account` (repeatable),
-    `balances-only`, and `version` verbatim.
+    one claim issued; asks the configured providers and merges their answers.
   - `GET /simplefin/info` — answers `{"versions": ["1.0"]}`, the protocol
     version supported by this aggregator for its clients; no auth required.
 
@@ -264,27 +300,13 @@ real network call.
 
 ### Manual verification against the real SimpleFIN demo bridge
 
-`scripts/manual_verify.py` is a separate, human-run smoke test against the
-**real** SimpleFIN demo bridge (not part of `pytest`, and not run in CI). It
-fetches a demo setup token, claims it, issues itself a setup token, starts the
-real server, claims that token the way a client app would, and uses the
-credentials it gets back to query `/simplefin/info` and `/simplefin/accounts`
-end to end.
+`scripts/manual_verify.py` is a human-run smoke test against the **real**
+SimpleFIN demo bridge — not part of `pytest`, and not run in CI. It drives the
+real server end to end, from claiming provider tokens through a client app's
+sync, using throwaway demo tokens it fetches itself:
 
 ```sh
 uv run scripts/manual_verify.py
 ```
 
-With no argument it fetches a fresh demo setup token from
-[the SimpleFIN developer guide](https://beta-bridge.simplefin.org/info/developers)
-itself — that page mints a new one on every load, so don't reuse an old one
-from memory or from these docs.
-
-To pass a demo setup token manually:
-
-```sh
-uv run scripts/manual_verify.py <demo-setup-token>
-```
-
-It is safe to put the demo token on the command line, since it only has the
-potential to leak demo data.
+Its docstring describes what it checks and how to pass tokens of your own.

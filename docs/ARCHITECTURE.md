@@ -13,16 +13,11 @@ restating it.
 
 A server that speaks the SimpleFIN Bridge protocol to a client app
 (Actual Budget is the motivating example, but it's generic) and proxies one or
-more SimpleFIN providers behind it. `GET /simplefin/accounts` answers 200, or
-403 for a client authentication failure, and nothing else: a provider's own
-status is never reflected in this server's, because 403 here is a statement
-about the client app's credentials and a provider's is about a different pair
-of principals. What a provider itself reports in v1's `errors` array is
-relayed there, and what a provider's failure costs is that provider's
-accounts rather than the whole response. The accounts of every
-configured provider are presented as one set, each account id behind its
-provider's prefix — see "Account id namespacing" for the scheme and the
-routing that inverts it.
+more SimpleFIN providers behind it, v1 in both directions. The accounts of
+every configured provider are presented as one set, each account id behind its
+provider's prefix — see "Account id namespacing" — and a provider's failure
+costs that provider's accounts rather than the whole response — see
+"`GET /simplefin/accounts`".
 
 The other half of the job is credential handling. A provider access URL embeds
 Basic Auth credentials for the user's bank data, and it is obtained by pasting
@@ -103,11 +98,11 @@ every attack the write path defends against.
 It does not run on the `.lock` sidecars, which hold nothing.
 
 The provider store is keyed by provider key because that is the one identifier
-`config.toml` and the store share; neither file has to name the other.
-Consequence: two accounts at the same provider would collide on one key. The
-app token store is keyed by the `--key` its command was given, constrained to
-`[a-z0-9-]+` at the command and again in the model, so what `app list` prints
-is what this application could have written.
+`config.toml` and the store share; neither file has to name the other — which
+is why two accounts at one provider is a non-goal. The app token store is keyed
+by the `--key` its command was given, constrained to `[a-z0-9-]+` at the
+command and again in the model, so what `app list` prints is what this
+application could have written.
 
 ## Key data structures
 
@@ -122,12 +117,7 @@ Config / Provider                   public -- frozen, every field present
 
 To see the precise fields, consult `config.py`.
 
-The shapes differ in one field. `_ProviderFileEntry.prefix` is `str | None`,
-where `None` means the file said nothing and `""` means the operator asked for
-the blank catch-all; `Provider.prefix` is a plain `str`. The reason for the
-split is that Pydantic's representation of the config file as written must
-support fields such as `prefix` to be `None`, while the public type must never
-allow that.
+`config.py`'s module docstring says why there are two.
 
 `base_url` must be ASCII because a URL is: an internationalized host appears in
 one as punycode, not as the characters it is spelled with. The provider path
@@ -154,14 +144,7 @@ reports them and not just the one that would trip over them:
 - No key appears twice in `providers`. Everything per-provider is keyed by it,
   so two entries sharing one would collapse into a single provider rather than
   being aggregated.
-- The prefix set is unambiguous: no non-blank prefix is a prefix of another,
-  and at most one is blank.
-
-A rejected prefix is not quoted back in the error — the failure's location
-names the entry, which is enough to find it, and a value out of a file this
-application does not write is not repeated to be sure. The same posture as a
-`custom_providers` root, which reaches a message only through
-`UrlValidationError`.
+- The prefix set is unambiguous, per "Account id namespacing".
 
 **A `Config` is read-only once `load_config` returns**, and there is no config
 hot-reload — nothing mutates one, nothing reloads one, and `serve` reads
@@ -177,19 +160,8 @@ authenticates, and written on every claim.** That is the whole of what makes
 or a reload signal to it.
 
 **`load_config(path) -> Config`** reads TOML, warns if the file is
-group/other-accessible, and validates and resolves via `config_from_mapping`. Its
-error path has two branches. A `ValidationError` is never `str()`d; it goes
-through `state_file.py`'s `describe_validation_failure` — the same rendering the state
-files get, for the same reason: a `custom_providers` root can carry userinfo.
-See "Cross-cutting: secrets and logging". Don't bypass it by catching and
-re-stringifying the raw `ValidationError` elsewhere. The second branch catches
-`ConfigCheckError` and `ProviderRegistryError` — the checks that span
-providers, which run after validation and so cannot go through that rendering
-— and interpolates their message directly. That is safe because both build
-their text out of provider keys alone, which `ProviderEntry.__post_init__` has
-already constrained to `[a-z0-9-]+`. The catch names those two types rather
-than `ValueError` so an unexpected one stays a traceback instead of being
-reported to the operator as their config being wrong.
+group/other-accessible, and validates and resolves via `config_from_mapping`.
+Its two error branches are item 3 of "Cross-cutting: secrets and logging".
 
 ### `CustomProvider` (`config.py`)
 
@@ -376,7 +348,7 @@ since `bank` and `bank2` are distinct and still ambiguous — and allows at most
 one blank prefix. `resolve_provider_for_account` is then a longest-prefix
 match.
 
-**The blank prefix is a knowingly leaky choice, and the leak is documented
+**The blank prefix is a knowingly leaky choice, and the leak is accepted
 rather than defended against.** If the blank provider returns an id of its own
 beginning with another provider's prefix, that id routes to the wrong provider
 — which answers with nothing, having no such account — and it can collide
@@ -398,11 +370,11 @@ codebase:
   asked to confirm a host in the phishing case confirms the attacker's. That is
   why `KNOWN_PROVIDERS` is fixed, why extending it is a config edit and nothing
   else, and why a mismatch is a hard failure with no prompt and no `--force`.
-- **Deliberately not implemented**, and previously rejected in review: IP-range
-  blocking, DNS pre-resolution/pinning or other SSRF defenses (single
-  principal, no confused deputy — and TLS binds identity to the hostname, so
-  the resolved address is irrelevant); dereferencing an account's `currency`
-  URL; credential encryption at rest beyond file permissions.
+- **Deliberately not implemented**: IP-range blocking, DNS
+  pre-resolution/pinning or other SSRF defenses (single principal, no confused
+  deputy — and TLS binds identity to the hostname, so the resolved address is
+  irrelevant); credential encryption at rest beyond file permissions.
+  `.coderabbit.yaml` carries the same list, so a reviewer does not propose them.
 - **Matching is one prefix comparison** of `origin_and_path`, which begins with
   the scheme and host and so covers scheme, host, port and path prefix at once.
   **Do not add separate scheme/host/port checks anywhere** — they would be
@@ -503,8 +475,7 @@ as unclaimed later.
 
 `_build_claim_client` and `_build_probe_client` are seams purely for test
 injection (see Testing below) — not a general dependency-injection pattern
-used elsewhere in this codebase. These two sync `httpx2.Client`s are the only
-non-async HTTP calls in the project.
+used elsewhere in this codebase.
 
 ### CLI `app new` / `regen` / `revoke` (obtaining/revoking *this aggregator's* tokens)
 
@@ -618,9 +589,9 @@ contributing nothing, the same as any other way of failing.
 
 ## Concurrency model
 
-- Everything provider-facing is `httpx2.AsyncClient` / `async def`. No sync
-  client anywhere in the request path (the CLI's `claim` command is the one
-  legitimate exception — it's a one-shot utility outside any request path).
+- Everything provider-facing is `httpx2.AsyncClient` / `async def`. The only
+  sync clients are `claim`'s two, for the POST and the probe — a one-shot
+  command outside any request path.
 - One `AsyncClient` per provider, built once in the lifespan, closed once at
   shutdown. Never built per-request.
 - `fetch_all` always goes through `asyncio.gather`, including for a
@@ -695,9 +666,7 @@ before touching anything credential-adjacent:
    256-bit random values, not chosen passwords, and there is no dictionary to
    search.
 3. **The `ValidationError` path** in `state_file.py`, which `load_config` and
-   both stores share -- and, beside it in `load_config` only, the
-   `ConfigCheckError`/`ProviderRegistryError` branch, whose messages are built
-   from provider keys alone and so carry nothing out of the file — never `str()` a `ValidationError` directly; pydantic's
+   both stores share. Never `str()` a `ValidationError` directly; pydantic's
    default rendering embeds the raw rejected input. The rendering is a
    *safelist*: it reads pydantic's message only for `value_error` and
    `assertion_error`, whose text this project wrote, and otherwise reads the
@@ -708,7 +677,14 @@ before touching anything credential-adjacent:
    from field names and list indices only, never mapping keys, which come from
    the file. `tests/test_state_file.py` pins the property across a corpus
    indexed by misparse shape. For the same reason none of these paths reports
-   the offending byte from a `UnicodeDecodeError`.
+   the offending byte from a `UnicodeDecodeError`, and a rejected `prefix` is
+   not quoted back. Beside it, in `load_config` only, is the branch for
+   `ConfigCheckError` and `ProviderRegistryError` — the checks that span
+   providers, which run after validation and so cannot use that rendering. It
+   interpolates their message directly, which is safe because both build their
+   text from provider keys alone, already constrained to `[a-z0-9-]+`. The
+   catch names those two types rather than `ValueError`, so an unexpected one
+   stays a traceback instead of being reported as the operator's config.
 4. **uvicorn's own access logger** — bypasses application-level logging
    entirely. `access_log.py` + the `CLAIM_PATH_PREFIX`-based wiring in
    `cli.py`/`app.py` exists because uvicorn was printing the raw setup token to
@@ -734,10 +710,8 @@ before touching anything credential-adjacent:
    the client app sends back to ask about that account again. What reaches the
    client app is deliberately much larger: every key inside `accounts` survives
    the merge, and v1's `errors` strings are relayed verbatim. What this
-   application does not do is write a string of its own into `errors`: the array
-   holds only what the providers themselves reported, so the `TODO(#4)` work
-   that will add such strings is the first thing that has to choose what they
-   may name.
+   application does not do is write a string of its own into `errors`: that array
+   holds only what the providers themselves reported.
 
 **A dependency's own logging is outside all five.** `httpcore2` traces each
 exchange at DEBUG, including the exception it is about to raise, and a protocol
@@ -774,21 +748,23 @@ sent.
   `FastAPI.TestClient` drives real ASGI request/response cycles including the
   lifespan; `typer.testing.CliRunner` drives `claim`'s menu and token prompts
   via `input=`; `_loopback_provider` serves one over a real socket. No
-  `unittest.mock` beyond `monkeypatch`, no `respx` (dropped when the project
-  migrated from `httpx` to `httpx2` — respx doesn't support `httpx2`).
-- **No traffic leaves the machine in the automated suite.** One test binds a
-  socket: `_loopback_provider` in `tests/test_accounts_endpoint.py` answers
-  from `127.0.0.1`. It asserts that credentials stay out of the outbound URL,
-  and a `MockTransport` cannot carry that — installing one replaces the client
-  `build_provider_client` returned, discarding the `base_url`/`auth=` split
-  that is the thing under test. Loopback is still the network stack; what the
-  suite never does is address a host off this machine. The one place that does
-  — `scripts/manual_verify.py` against the live SimpleFIN demo bridge — is
-  separate, human-run, and documented as such in the README.
+  `unittest.mock` beyond `monkeypatch`, and no `respx`, which does not support
+  `httpx2`.
+- **No traffic leaves the machine in the automated suite.** Two fakes bind a
+  socket on `127.0.0.1`, where a test is about what reaches the wire and a
+  `MockTransport` cannot carry it — installing one replaces the client
+  `build_provider_client` returned, discarding the `base_url`/`auth=` split.
+  `_loopback_provider` in `tests/test_accounts_endpoint.py` checks that
+  credentials stay out of the outbound URL; `echoing_provider` in
+  `tests/support.py` hands a request back as a malformed status line, for the
+  leak corpus in "Cross-cutting: secrets and logging". Loopback is still the
+  network stack; what the suite never does is address a host off this machine.
+  The one place that does — `scripts/manual_verify.py` against the live
+  SimpleFIN demo bridge — is separate, human-run, and documented as such in the
+  README.
 - **`tests/support.py`** holds the shared fixtures: `make_config` builds a
-  `Config` through `model_validate(dict)`, the same path `load_config` uses
-  (direct kwargs trip up basedpyright on `SecretStr` fields), from as many
-  `ProviderSpec`s as a test names — each one a key, a root, an optional
+  `Config` through `config_from_mapping`, the path `load_config` uses, from as
+  many `ProviderSpec`s as a test names — each one a key, a root, an optional
   explicit prefix and the access URL the store will hold for it, spelled out
   rather than derived so that a test meaning them to disagree can say so;
   `make_access_urls`/`make_app` supply `create_app`'s other arguments, and
@@ -837,11 +813,6 @@ sent.
   client app's parameters go to every queried provider unchanged.
 - **`errlist`, `connections`, or any other v2 field**, inbound or outbound.
 - **Dereferencing an account's `currency` URL.**
-
-## Known planned future work
-
-`TODO.md` is the running list. Check it before assuming any behavior
-documented above is permanent.
 
 ## Stack notes
 

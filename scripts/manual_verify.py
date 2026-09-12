@@ -2,15 +2,16 @@
 """Manual, human-run end-to-end check against the real SimpleFIN demo bridge.
 
 Not part of the automated test suite, which never makes a real network call.
-This one does: it fetches a fresh demo setup token, writes a throwaway config,
-claims that token, issues itself a setup token, starts the real server, claims
-that token the way a client app would, and uses the credentials it gets back.
+This one does: it fetches two fresh demo setup tokens, writes a throwaway
+config naming the demo bridge as two providers, claims a token for each, issues
+itself a setup token, starts the real server, claims that token the way a client
+app would, and uses the credentials it gets back.
 
-Run it with no arguments to fetch a fresh demo setup token from
+Run it with no arguments to fetch the demo setup tokens from
 https://beta-bridge.simplefin.org/info/developers -- that page mints a new one
-on every load -- or pass one already in hand:
+on every load -- or pass two already in hand:
 
-    uv run scripts/manual_verify.py [<demo-setup-token>]
+    uv run scripts/manual_verify.py [<demo-setup-token> <demo-setup-token>]
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from contextlib import contextmanager
 from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urlencode, urlsplit
 
 
 if TYPE_CHECKING:
@@ -47,9 +48,13 @@ UV: str = _FOUND_UV
 
 PORT = 8321
 BASE_URL = f"http://127.0.0.1:{PORT}"
-# The demo bridge is the built-in `simplefin-bridge` provider, so its root
-# already covers the demo claim URL and no [[custom_providers]] entry is needed.
-PROVIDER_KEY = "simplefin-bridge"
+# The demo bridge is the built-in `simplefin-bridge` provider, and the only
+# live one this script can claim from, so it is configured a second time under
+# a custom key to give the server two providers. That one takes the blank
+# prefix, so both a default prefix and the catch-all are routed through.
+PREFIXED_KEY = "simplefin-bridge"
+PREFIX = f"{PREFIXED_KEY}:"
+BLANK_KEY = "demo-bridge-again"
 APP_KEY = "manual-verify"
 
 DEVELOPERS_PAGE = "https://beta-bridge.simplefin.org/info/developers"
@@ -62,8 +67,17 @@ bind_host = "127.0.0.1"
 bind_port = {PORT}
 base_url = "{BASE_URL}"
 
+[[custom_providers]]
+key = "{BLANK_KEY}"
+label = "SimpleFIN demo bridge, again"
+root = "https://beta-bridge.simplefin.org/simplefin"
+
 [[providers]]
-key = "{PROVIDER_KEY}"
+key = "{PREFIXED_KEY}"
+
+[[providers]]
+key = "{BLANK_KEY}"
+prefix = ""
 """
 
 
@@ -167,26 +181,34 @@ def serving(config_dir: Path) -> Generator[None]:
         _ = server.wait()
 
 
-def main(demo_setup_token: str | None) -> None:
-    if demo_setup_token is None:
-        print(f"==> Fetching a fresh demo setup token from {DEVELOPERS_PAGE}")
-        demo_setup_token = fetch_demo_token()
-    # Removed on every path: it ends up holding a live provider access URL,
-    # with the credentials for the user's bank data embedded in it.
+def account_ids(body: str) -> list[str]:
+    accounts = cast(
+        "list[dict[str, object]]", cast("dict[str, object]", json.loads(body))["accounts"]
+    )
+    return [cast(str, account["id"]) for account in accounts]
+
+
+def main(demo_setup_tokens: tuple[str, str] | None) -> None:
+    if demo_setup_tokens is None:
+        print(f"==> Fetching two fresh demo setup tokens from {DEVELOPERS_PAGE}")
+        demo_setup_tokens = (fetch_demo_token(), fetch_demo_token())
+    # Removed on every path: it ends up holding live provider access URLs,
+    # with the credentials for the user's bank data embedded in them.
     with tempfile.TemporaryDirectory() as name:
-        run(demo_setup_token, Path(name))
+        run(demo_setup_tokens, Path(name))
 
 
-def run(demo_setup_token: str, config_dir: Path) -> None:
+def run(demo_setup_tokens: tuple[str, str], config_dir: Path) -> None:
     config_file = config_dir / "config.toml"
     _ = config_file.write_text(CONFIG)
     config_file.chmod(0o600)
 
-    print("==> Claiming the SimpleFIN demo setup token")
-    # On stdin, which `claim` prompts for, rather than as an argument.
-    _ = aggregator(
-        "claim", "--provider", PROVIDER_KEY, config_dir=config_dir, stdin=f"{demo_setup_token}\n"
-    )
+    for key, demo_setup_token in zip((PREFIXED_KEY, BLANK_KEY), demo_setup_tokens, strict=True):
+        print(f"==> Claiming a SimpleFIN demo setup token as {key}")
+        # On stdin, which `claim` prompts for, rather than as an argument.
+        _ = aggregator(
+            "claim", "--provider", key, config_dir=config_dir, stdin=f"{demo_setup_token}\n"
+        )
 
     print("==> Issuing a setup token for this run")
     setup_token = aggregator(
@@ -216,9 +238,28 @@ def run(demo_setup_token: str, config_dir: Path) -> None:
         )
         print(f"    {accounts}")
         # simplefin-aggregator responds 200 for an unreachable provider, so
-        # check whether the response included any accounts.
-        if not cast("dict[str, object]", json.loads(accounts)).get("accounts"):
-            message = "/simplefin/accounts returned no accounts; the provider did not answer"
+        # check that each provider contributed accounts.
+        ids = account_ids(accounts)
+        prefixed = [account_id for account_id in ids if account_id.startswith(PREFIX)]
+        blank = [account_id for account_id in ids if not account_id.startswith(PREFIX)]
+        if not prefixed or not blank:
+            message = "/simplefin/accounts is missing a provider's accounts; it did not answer"
+            raise RuntimeError(message)
+        if ids != prefixed + blank:
+            message = "/simplefin/accounts did not list accounts in configured provider order"
+            raise RuntimeError(message)
+
+        print("==> GET /simplefin/accounts naming one account from each provider")
+        # Named in the reverse of configured order; the answer follows configured order.
+        query = urlencode([("account", blank[0]), ("account", prefixed[0])])
+        filtered = expect(
+            request(f"{BASE_URL}/simplefin/accounts?{query}", auth=auth),
+            HTTPStatus.OK,
+            "/simplefin/accounts naming accounts",
+        )
+        print(f"    {filtered}")
+        if account_ids(filtered) != [prefixed[0], blank[0]]:
+            message = "/simplefin/accounts did not answer with exactly the accounts named"
             raise RuntimeError(message)
 
         print("==> GET /simplefin/accounts with no credentials (expect 403)")
@@ -245,11 +286,15 @@ if __name__ == "__main__":
     # handle a SimpleFIN demo token, which grants access to demo data rather
     # than a real account, so the exposure is a paste of throwaway data, not
     # a credential.
-    if len(sys.argv) > 2:  # noqa: PLR2004
-        print(f"usage: {sys.argv[0]} [<demo-setup-token>]", file=sys.stderr)
-        print(
-            f"  with no arguments, fetches a demo setup token from {DEVELOPERS_PAGE}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    main(sys.argv[1] if len(sys.argv) == 2 else None)  # noqa: PLR2004
+    match sys.argv[1:]:
+        case []:
+            main(None)
+        case [first, second]:
+            main((first, second))
+        case _:
+            print(f"usage: {sys.argv[0]} [<demo-setup-token> <demo-setup-token>]", file=sys.stderr)
+            print(
+                f"  with no arguments, fetches demo setup tokens from {DEVELOPERS_PAGE}",
+                file=sys.stderr,
+            )
+            sys.exit(1)

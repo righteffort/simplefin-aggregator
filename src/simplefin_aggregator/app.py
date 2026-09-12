@@ -232,8 +232,8 @@ def create_app(
                 for (provider, _), response in zip(requests, responses, strict=True)
             ]
         )
-        # Always respond 200, even if a provider did not. A provider's failure is reported via the
-        # body's `errors`, which is what v1 provides that array for.
+        # Always 200, even if a provider did not answer 200: a provider's failure costs its
+        # accounts, and this server's status speaks only to the client app's credentials.
         return Response(
             content=merged.body, status_code=HTTPStatus.OK, media_type="application/json"
         )

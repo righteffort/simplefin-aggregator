@@ -138,7 +138,6 @@ def merge(results: Sequence[tuple[str, ProviderResponse]]) -> MergedResponse:
         key = response.provider_name
         contributed = _accounts_and_errors(response, prefix)
         if contributed is None:
-            # TODO(#4): Include an entry in errors for each of the provider's last seen accounts.
             continue
 
         provider_accounts, provider_errors = contributed

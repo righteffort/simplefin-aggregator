@@ -157,7 +157,7 @@ def _claim_access_url(claim_url: NormalizedUrl, entry: ProviderEntry) -> str:
         _fail(f"error: provider {entry.key!r} rejected the setup token (403).", already_claimed)
     if response.status_code != HTTPStatus.OK:
         # The status alone. A response body is attacker-influenced, and this
-        # path now also catches the 3xx that redirects-disabled turns into a
+        # path also catches the 3xx that redirects-disabled turns into a
         # failure rather than a hop.
         _fail(
             f"error: claim failed: provider {entry.key!r} answered {response.status_code}",
