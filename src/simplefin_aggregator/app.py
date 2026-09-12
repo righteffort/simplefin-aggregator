@@ -44,14 +44,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# v1's five. `version` is absent deliberately: a provider that honoured a
-# forwarded one could answer in a protocol this application does not parse.
+# `version` is omitted intentionally: a provider that honoured a forwarded one
+# could answer in a protocol this application does not handle.
 ACCOUNTS_FORWARDED_PARAMS = frozenset(
     {"start-date", "end-date", "pending", "account", "balances-only"}
 )
 
-# The protocol version this application supports for clients. A `version` a
-# client app sends is ignored.
+# The protocol version this application supports for clients.
 PROTOCOL_VERSION = "1.0"
 
 # The path segment before {token}. Also used to redact the claim token from

@@ -51,12 +51,7 @@ async def fetch_all(
     path: str,
     counter: RequestCounter,
 ) -> list[ProviderResponse]:
-    """Issue every given request concurrently. Output order matches `requests`.
-
-    Each provider is paired with its own parameters, because an `account`
-    filter is a list of that provider's own account ids: handing one provider
-    another's would ask it about accounts it has never heard of.
-    """
+    """Issue every given request concurrently. Output order matches `requests`."""
     return list(
         await asyncio.gather(
             *(
