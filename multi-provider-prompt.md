@@ -140,25 +140,17 @@ input order.
 `ACCOUNTS_FORWARDED_PARAMS` drops `version` and becomes exactly v1's five:
 `start-date`, `end-date`, `pending`, `account`, `balances-only`.
 
-`version` is not forwarded, and it is not ignored either: **a request carrying
-a `version` value other than exactly `1` is rejected with a 400** and a v1-shaped
-body (`{"accounts": [], "errors": [...]}`), after client authentication, before
-any provider is contacted. Every value is checked if the parameter is repeated.
-This aggregator speaks 1.0 upstream whatever the client asks for, so a client
-asking for something else is asking for a protocol this server does not
-implement, and answering it in v1 anyway would be a silent lie. Forwarding the
-parameter instead would be worse: a provider that honoured it would put v2
-shapes into bodies this code merges as v1.
+**Settled: `version` is ignored, and `/info` advertises `1.0`.** v1 is the only
+protocol spoken in either direction, so there is nothing for the parameter to
+select: whatever a client app asks for, it is answered in v1. It is dropped
+from the forwarded set rather than relayed, because a provider that honoured a
+forwarded `version=2` could answer in a protocol this application does not
+parse.
 
-**Settled: accept `1` and `1.0`, and advertise `1.0`.** Read out of the two
-published specs. v1 defines no `version` parameter and its `/info` example is
-`{"versions": ["1.0"]}`. v2 introduces the parameter as a *major-version
-prefix* — "Must be `2` for this version of the protocol. Can be `1` for earlier
-versions" — and describes `/info`'s array as "version string prefixes", its own
-example being `["1","2"]`. So `1` and `1.0` are two spellings of the one
-version this server speaks, and both are accepted; every other value is the
-400. Nothing longer is: `1.0.7` names a fix release this application makes no
-claim about.
+An earlier design rejected any value but `1` and `1.0` with a 400. It bought
+nothing: a client app that wanted v2 cannot be given v2 either way, and a
+version check is code and tests for a case no client app reaching a v1 server
+has a use for.
 
 ### Merging responses
 
@@ -194,8 +186,8 @@ client app can act on: it cannot tell the user which of their bank connections
 stopped working. So the failure is logged, with its reason, and `errors`
 carries what the providers themselves said and nothing this application
 invented. The gap that leaves is real and knowingly left open: a dead provider
-answers 200 with an empty account set and says nothing about why. `docs/TODO.md`
-records it.
+answers 200 with an empty account set and says nothing about why. Issue #4
+records it, and `merge.py` carries the `TODO(#4)` where the entries would go.
 
 **An unreadable `errors` costs the error messages and nothing else.** If
 `errors` is present but is not an array of strings, keep the accounts — they
@@ -286,8 +278,12 @@ This removes the last caller of `merge` that is not `/accounts`.
 - `transport.py`: the `fetch_all` signature above. `fetch` is unchanged.
 - `app.py`: `accounts` builds per-provider parameter lists and `info` no
   longer fans out.
-- `config.py`: `providers` loses `max_length=1`, `Provider` gains `prefix`,
-  and the model-level validator gains the key-uniqueness and prefix rules.
+- `config.py`: `providers` loses `max_length=1` and gains `prefix`, with the
+  key-uniqueness and prefix rules. Split in two pairs of types: a private
+  `_ConfigModel`/`_ProviderFileEntry` pair holding the file as written, where
+  `prefix` is `str | None`, and the public `Config`/`Provider` pair, frozen,
+  where it is `str`. The checks that span providers run in
+  `Config.__post_init__`.
 - `provider_clients.py` is unchanged: its 30-second timeout is already
   explicit, and with several providers in parallel it is what stops one dead
   provider holding the client app's request open — a dead provider costs the
@@ -299,8 +295,6 @@ This removes the last caller of `merge` that is not `/accounts`.
   prefix field with its default, and the "set `prefix = \"\"` for the provider
   you already sync from" instruction, which is the one thing an existing user
   must know before upgrading.
-- `docs/TODO.md`: drop what this task completes; record two accounts at the same
-  provider as still out of scope.
 - `docs/ARCHITECTURE.md`: the "identity function" purpose paragraph, the
   non-goals section and the entire "seams for the multi-provider future"
   section describe a version that no longer exists.
@@ -312,8 +306,7 @@ Do not build these.
 - **Two accounts at the same provider.** The access URL store keys on the
   provider key, so one configured provider is one account at that provider.
   Supporting more means an instance identifier distinct from the registry key,
-  which changes the store's shape and the claim menu. Note it in `docs/TODO.md`;
-  do not build it.
+  which changes the store's shape and the claim menu.
 - **De-duplicating the same real-world account reached through two
   providers.** It appears twice, with two ids. Nothing in the protocol
   identifies it as one account, and guessing is worse than not.
@@ -359,7 +352,7 @@ rule below, `{"versions": ["1.0"]}` would have read as a failed provider.
 **What remains is D and E.**
 
 Decisions those steps settled are recorded in place below, in the sections they
-govern: the `version` spelling, collisions being logged rather than reported,
+govern: `version` being ignored, collisions being logged rather than reported,
 an unreadable `errors` costing only the messages, a failed provider
 contributing no error string of this application's own, and an unroutable
 account id being logged rather than reported.
@@ -453,9 +446,8 @@ The probe:
 
 Protocol version:
 
-- `version=1` is accepted and not forwarded to any provider; any other
-  `version` value, including one among several, is a 400 with a v1-shaped
-  error body and no provider request.
+- Any `version` value, repeated or not, is answered in v1 with status 200, and
+  no provider receives the parameter.
 
 `/info`:
 
