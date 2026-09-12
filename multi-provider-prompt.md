@@ -118,11 +118,10 @@ came from.
   unknown, no provider is queried at all and the response is a well-formed
   empty one.
 
-  **Settled in B: logged, not reported.** An earlier draft of this section
-  asked for a trailing `errors` entry, which contradicts the rule below that
-  D1's is the only synthesized error worth putting in a body: the id cannot be
-  echoed back into a body another program displays, and an entry that withholds
-  it is a bare count naming nothing a client app can act on.
+  **Settled in B: logged, not reported.** An `errors` entry is not the place
+  for it. The id cannot be echoed back into a body another program displays,
+  and an entry that withholds it is a bare count naming nothing a client app
+  can act on.
 
 `fetch_all` therefore takes per-provider parameters. Something like
 
@@ -169,10 +168,11 @@ claim about.
 authentication failure, and nothing else.** A provider's HTTP status is not
 reflected in the aggregator's: 403 means the *client app's* credentials are
 bad, and a provider's 403 (access revoked upstream) is a different fact about
-a different pair of principals. Provider-side failure is reported in the
-`errors` array, which is exactly what v1 provides it for and what a bridge
-does when one of its bank connections breaks. This deletes the current
-`status=502` path and its tests.
+a different pair of principals. What a provider says about its own bank
+connections travels in the `errors` array, which is exactly what v1 provides
+it for, and what a provider's own failure costs is that provider's accounts
+rather than the whole response. This deletes the current `status=502` path and
+its tests.
 
 **Either this aggregator takes a provider's body, or that provider
 contributes nothing to the response — never both.** Taking the body means
@@ -188,13 +188,14 @@ uniformly. One bad account fails the whole provider rather than being skipped,
 so the client app hears that the provider did not sync instead of watching an
 account silently disappear.
 
-**The only synthesized error worth putting in the body is D1's**, one per
-account remembered from a failed provider's last successful sync, naming the
-institution the user has to go and fix. A bare string saying a provider could
-not be reached names nothing a client app can act on, so until D1 a failure is
-logged and contributes nothing to the response. That leaves a real gap between
-this step and D1 — a dead provider answers 200 with an empty account set and
-says nothing about why — and D1 closes it.
+**A provider that fails contributes nothing to the body — not even an error
+string.** A bare string saying a provider could not be reached names nothing a
+client app can act on: it cannot tell the user which of their bank connections
+stopped working. So the failure is logged, with its reason, and `errors`
+carries what the providers themselves said and nothing this application
+invented. The gap that leaves is real and knowingly left open: a dead provider
+answers 200 with an empty account set and says nothing about why. `docs/TODO.md`
+records it.
 
 **An unreadable `errors` costs the error messages and nothing else.** If
 `errors` is present but is not an array of strings, keep the accounts — they
@@ -207,8 +208,7 @@ the order the providers happened to answer in.
 - `accounts`: each provider's accounts in turn, in configured order, each
   provider's own order preserved within its run.
 - `errors`: for each provider in configured order, that provider's own
-  `errors` strings passed through verbatim, or — once D1 lands — the
-  synthesized entries described below.
+  `errors` strings passed through verbatim.
 
 **What is preserved.** The byte-identity guarantee is gone, and there is no
 single-provider fast path to preserve it: a fast path would leave the merge
@@ -224,88 +224,15 @@ Note in passing that re-serialization is not byte-preserving for numbers: a
 provider writing `1.10` in an `extra` blob gets `1.1` back. Amounts are
 strings in v1, so nothing that matters is affected.
 
-### Provider failures the client app can act on
-
-A bare `"provider unreachable"` string is true and useless: the client app
-cannot tell the user which of their bank connections stopped working. What
-SimpleFIN Bridge emits, and what a client app recognises, names the
-institution:
-
-```text
-Connection to {account name} may need attention. {this application's detail, naming the provider}
-```
-
-Producing that for a provider this aggregator cannot currently reach means
-remembering what that provider last told us about — which is why this task
-introduces a second kind of on-disk state alongside the access URLs.
-
-#### The last-seen accounts
-
-**A new store, `provider_accounts.json`,** in the same configuration directory
-as `config.toml` and `provider_creds.json`, holding, per provider key, the
-accounts that provider most recently reported, in the order it reported them.
-
-Store per account its `id`, its `name`, and its `org` **verbatim as an opaque
-object**. Not the transactions, which are bulk this has no use for, and not
-the balances, which would turn a list of "these accounts exist" into a copy of
-the user's finances on disk for no gain. Do not model the `org`: this code
-reads a display name out of it when it writes an error string and otherwise
-carries it as JSON.
-
-Storing accounts rather than a digest of them is deliberate, because the
-question of what the error entries should look like is open — see below — and
-a store shaped around one answer would have to be rewritten for the other.
-
-- **Updated only from an unfiltered successful response.** A response to a
-  request carrying `account` parameters is a subset by construction, and
-  writing it back would shrink the remembered set to whatever the client last
-  asked about.
-- **Held in memory** — read at startup into `_AppState`, updated there — **and
-  persisted only when it changes.** It changes when the user adds or removes
-  an account at their provider, so in practice this is a write every few
-  months, not a write per request. `merge` already parses each usable body, so
-  it should hand the accounts it saw back to the route alongside the merged
-  response rather than have the route parse anything a second time.
-- **Reuse the shared JSON state-file helper** extracted by the app-token task,
-  and the locked read-modify-write with it: the CLI probe below writes this
-  file too. The write happens on the request path, so it goes through
-  `starlette.concurrency.run_in_threadpool` like every other file operation
-  there.
-- Permissions: 0600, warn if group- or other-readable, like the other two. Its
-  risk profile differs from both and is worth a line in `ARCHITECTURE.md`: it
-  holds no credentials, and nothing an attacker gains by writing it, but it
-  does disclose which institutions and accounts the user has. It is
-  disposable — the next successful unfiltered sync rebuilds it.
-
-#### Synthesizing the error entries
-
-**One entry per remembered account**, whatever institution it belongs to: five
-accounts at one bank produce five entries. That is a requirement, so pin it as
-one — and say in a comment where the entries are built that per-account is the
-settled rule, or a later reader will re-derive per-institution and get the
-other answer.
-
-**When a provider has nothing remembered** — never yet reached, or a fresh
-install — do not produce any error entries for the provider, only issue a log
-line naming the provider and saying no accounts have been retrieved from it yet.
-That is acceptable, and is what the claim-time probe below exists to make rare.
-
-**Error text carries no URLs.** The detail clause is this application's own
-vocabulary keyed by provider key — `"simplefin-aggregator could not reach
-provider 'simplefin-bridge' (connection timed out)"` — not `str(exc)` from
-httpx2. The merged `errors` array is content this application hands to another
-program; keep the exception detail in the log line, where it is useful, and
-keep the body's strings stable and free of anything a URL could ride in on.
-
 ### The claim probe
 
 `claim` gains a step after storing the access URL: fetch `/accounts` once with
-`balances-only=1`, and
-
-1. populate `provider_accounts.json` for that provider, so a provider that is
-   down the first time the client app syncs still produces a useful error; and
-2. tell the user, at the moment they are set up to act on it, if the
-   credentials they just claimed do not actually work.
+`balances-only=1`, to tell the user, at the moment they are set up to act on
+it, if the credentials they just claimed do not actually work. Otherwise the
+first news of it is a client app that syncs nothing, days later and in another
+program's words. `balances-only=1` because whether the credentials work is the
+whole of the question, and the transactions would be a download this throws
+away.
 
 **A failed probe is a warning, not a failure: report it and exit 0.** The
 access URL is stored and valid; the setup token is spent and cannot be
@@ -355,18 +282,16 @@ This removes the last caller of `merge` that is not `/accounts`.
   returning the owning provider and the provider-local id, or `None` for an id
   no prefix claims.
 - `merge.py` is rewritten. `MergedResponse` loses `status` (always 200) or
-  keeps it as documentation of that fact — decide in the code, not here — and
-  carries the accounts it saw, per provider, back to the route.
+  keeps it as documentation of that fact — decide in the code, not here.
 - `transport.py`: the `fetch_all` signature above. `fetch` is unchanged.
-- `app.py`: `accounts` builds per-provider parameter lists, `info` no longer
-  fans out, `_AppState` gains the in-memory last-seen accounts, `create_app`
-  gains that store's path.
+- `app.py`: `accounts` builds per-provider parameter lists and `info` no
+  longer fans out.
 - `config.py`: `providers` loses `max_length=1`, `Provider` gains `prefix`,
   and the model-level validator gains the key-uniqueness and prefix rules.
 - `provider_clients.py` is unchanged: its 30-second timeout is already
   explicit, and with several providers in parallel it is what stops one dead
-  provider holding the client app's request open — which now degrades into the
-  synthesized-error path rather than into a stall.
+  provider holding the client app's request open — a dead provider costs the
+  client app that provider's accounts, not its whole sync.
 - `request_counter.py`, `provider_response.py`: unchanged.
 - `tests/support.py`: `make_config` grows a way to build several providers
   with prefixes; most test files construct configs through it.
@@ -398,8 +323,6 @@ Do not build these.
   client's parameters go to every queried provider unchanged.
 - **`errlist`, `connections`, or any other v2 field**, inbound or outbound.
 - **Custom currency URL fetching**, as before.
-- **A command to refresh `provider_accounts.json`.** Every successful
-  unfiltered sync refreshes it.
 
 ### If you want to push back
 
@@ -407,10 +330,10 @@ Do not build these.
   403 on this endpoint is a statement about the client app's credentials.
   Reflecting a provider's would tell the client app to re-authenticate against
   the wrong party, and would be ambiguous the moment two providers disagree.
-- *"Total provider failure should not be a 200."* It should. The `errors`
-  array is the channel v1 gives for this, a non-2xx status stops most client
-  apps parsing the body at all, and an empty `accounts` list does not delete
-  anything client-side.
+- *"Total provider failure should not be a 200."* It should. A non-2xx status
+  stops most client apps parsing the body at all, and an empty `accounts` list
+  does not delete anything client-side. A provider's failure is news about one
+  of this bridge's connections, not about the request the client app made.
 - *"Prefix the transaction ids too."* Unnecessary: v1 scopes transaction id
   uniqueness to the account, and account ids are now unique.
 - *"Rewrite `org.id`."* No. An org is identified by `domain`/`sfin-url`, which
@@ -419,9 +342,6 @@ Do not build these.
 - *"Make the prefix mandatory / forbid the blank one."* The blank prefix is
   how an existing single-provider user keeps their client app's account links.
   Its hazards are documented above and belong in the README, not in code.
-- *"Store the accounts' balances too, or the whole payload."* Nothing needs
-  them, and they would turn a list of which accounts exist into a copy of the
-  user's finances on disk.
 - *"Retry the claim POST."* Answered above: a spent token cannot be
   re-claimed, and no automatic retry can tell a request that failed before
   arriving from one that failed after being processed. The user can.
@@ -436,13 +356,13 @@ locally, `2331774` is the merge rewrite, and B configures and routes several
 providers. C ran before A because `/info` was a caller of `merge`, and an
 `/info` body is not an accounts body: once `merge` enforced the usable/unusable
 rule below, `{"versions": ["1.0"]}` would have read as a failed provider.
-**What remains is D1, D2, E.**
+**What remains is D and E.**
 
 Decisions those steps settled are recorded in place below, in the sections they
 govern: the `version` spelling, collisions being logged rather than reported,
-an unreadable `errors` costing only the messages, no synthesized
-provider-failure error before D1, and an unroutable account id being logged
-rather than reported.
+an unreadable `errors` costing only the messages, a failed provider
+contributing no error string of this application's own, and an unroutable
+account id being logged rather than reported.
 
 **A. Merge several responses.** Rewrite `merge` and its tests: concatenation,
 prefixing, the deterministic order, the usable/unusable rule, always-200,
@@ -462,20 +382,10 @@ step updated it.
 **C. `/info` answers locally.** Small and separable; it is a behaviour change
 worth its own review rather than a footnote to B.
 
-**D1. The last-seen accounts.** `provider_accounts.json` on the shared
-state-file helper, loaded at startup into `_AppState`, updated from unfiltered
-successful responses, persisted on change, and consumed by `merge` to
-synthesize the error entries for a failed provider, one per remembered account
-as "Synthesizing the error entries" above requires. The store starts empty on
-every existing installation, so the generic nothing-remembered-yet message is
-what a first run produces — that is expected here, and D2 is what makes it
-rare.
-
-**D2. The claim probe.** `claim` fetches `balances-only=1` after storing the
-access URL, populates the store, and warns on failure without failing. It
-brings the probe's retry loop with it, and the explicit `retries=0` on the
-claim POST, which is a hardening of existing behaviour rather than part of the
-probe.
+**D. The claim probe.** `claim` fetches `balances-only=1` after storing the
+access URL, and warns on failure without failing. It brings the probe's retry
+loop with it, and the comment beside that loop saying why the proxied path has
+none.
 
 **E. Documentation.** 
 - user-facing documentation: `README.md` (the two-provider example,
@@ -506,8 +416,8 @@ Merging and ordering:
   no string `id`, a 402, a 403, a 3xx, and a transport failure: each is
   treated identically as that provider failing, and the other provider's
   accounts still come through with status 200.
-- Every provider failing: status 200 and a well-formed body; `errors` stays
-  empty until D1 has something to say in it.
+- Every provider failing: status 200 and a well-formed body, with `accounts`
+  and `errors` both empty.
 - Unknown keys inside an account survive the round trip; `errlist` and
   `connections` sent by a provider do not appear in the response.
 
@@ -533,18 +443,9 @@ Routing:
   both accounts are returned, `errors` is untouched, and the collision is
   logged naming both providers.
 
-The last-seen accounts and the probe:
+The probe:
 
-- An unfiltered successful response records each account's `id`, `name` and
-  `org`, in the order the provider reported them, and records no transactions
-  or balances; a filtered response does not touch the store.
-- The file is written only when the recorded accounts change.
-- A provider failing after a successful sync produces
-  `Connection to … may need attention` entries derived from what was
-  remembered, naming the provider in the detail clause.
-- A provider failing with nothing remembered produces the generic entry.
-- `claim` populates the store from the probe; a failing probe warns, exits 0,
-  and leaves the stored access URL in place.
+- A failing probe warns, exits 0, and leaves the stored access URL in place.
 - The claim POST is attempted exactly once, whatever the failure, and the
   message tells the user to re-run `claim` with the same token.
 - The proxied `/accounts` path issues exactly one request per queried provider
