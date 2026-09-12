@@ -5,7 +5,7 @@ from __future__ import annotations
 import socket
 import threading
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 import httpx2
 from pydantic import SecretStr
@@ -59,15 +59,40 @@ def install_provider_transport(app: FastAPI, key: str, handler: MockHandler) -> 
     )
 
 
-def make_config(
-    *, base_url: str = "http://127.0.0.1:8080", key: str = PROVIDER_KEY, root: str = PROVIDER_ROOT
-) -> Config:
-    """Build a Config the same way load_config does: from an untyped dict."""
+class ProviderSpec(NamedTuple):
+    """One provider for `make_config` and `make_access_urls` to build.
+
+    A `prefix` of None leaves the field out of the config entry, so the test
+    gets whatever the model defaults it to; "" is an explicit blank prefix. The
+    access URL is spelled out rather than derived from the root, because
+    `create_app` checks one against the other and a test that means them to
+    disagree is entitled to say so.
+    """
+
+    key: str = PROVIDER_KEY
+    root: str = PROVIDER_ROOT
+    prefix: str | None = None
+    access_url: str = PROVIDER_ACCESS_URL
+
+
+def make_config(*providers: ProviderSpec, base_url: str = "http://127.0.0.1:8080") -> Config:
+    """Build a Config the same way load_config does: from an untyped dict.
+
+    Given no providers, the one shared fixture provider.
+    """
+    specs = providers or (ProviderSpec(),)
     return Config.model_validate(
         {
             "base_url": base_url,
-            "providers": [{"key": key}],
-            "custom_providers": [{"key": key, "label": "Test Provider", "root": root}],
+            "providers": [
+                {"key": spec.key}
+                if spec.prefix is None
+                else {"key": spec.key, "prefix": spec.prefix}
+                for spec in specs
+            ],
+            "custom_providers": [
+                {"key": spec.key, "label": "Test Provider", "root": spec.root} for spec in specs
+            ],
         }
     )
 
@@ -93,11 +118,10 @@ def make_unclaimed_app(config_dir: Path, key: str = "test-app", label: str = "Te
     return secret
 
 
-def make_access_urls(
-    access_url: str = PROVIDER_ACCESS_URL, *, key: str = PROVIDER_KEY
-) -> dict[str, SecretStr]:
-    """The access URL store's contents for a config with one claimed provider."""
-    return {key: SecretStr(access_url)}
+def make_access_urls(*providers: ProviderSpec) -> dict[str, SecretStr]:
+    """The access URL store's contents for a config built from the same specs."""
+    specs = providers or (ProviderSpec(),)
+    return {spec.key: SecretStr(spec.access_url) for spec in specs}
 
 
 def make_app(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -20,7 +22,6 @@ from .app_tokens import (
     update_app_tokens,
 )
 from .auth import build_client_auth_dependency
-from .id_rewriting import rewrite_ids, unrewrite_ids
 from .merge import merge
 from .provider_clients import build_provider_client
 from .provider_registry import find_provider
@@ -41,8 +42,12 @@ if TYPE_CHECKING:
     from .config import Config, Provider
     from .url_validation import NormalizedUrl
 
+logger = logging.getLogger(__name__)
+
+# `version` is omitted intentionally: a provider that honoured a forwarded one
+# could answer in a protocol this application does not handle.
 ACCOUNTS_FORWARDED_PARAMS = frozenset(
-    {"start-date", "end-date", "pending", "account", "balances-only", "version"}
+    {"start-date", "end-date", "pending", "account", "balances-only"}
 )
 
 # The protocol version this application supports for clients.
@@ -117,32 +122,45 @@ def _resolve_access_url(
     return validate_access_url(entry.root, stored.get_secret_value(), provider=key)
 
 
-def _providers_to_query(config: Config, account_ids: Sequence[str]) -> list[Provider]:
-    """Which providers a request touches: those owning the accounts it names, or all of them."""
-    if not account_ids:
-        return list(config.providers)
-
-    selected: list[Provider] = []
-    seen: set[str] = set()
-    for account_id in account_ids:
-        provider = resolve_provider_for_account(account_id, config.providers)
-        if provider.key not in seen:
-            seen.add(provider.key)
-            selected.append(provider)
-    return selected
-
-
 def _forwarded_accounts_params(request: Request) -> list[tuple[str, str]]:
-    allowed = [
+    """Narrow the client app's query parameters to the ones v1 defines."""
+    return [
         (key, value)
         for key, value in request.query_params.multi_items()
         if key in ACCOUNTS_FORWARDED_PARAMS
     ]
-    raw_account_ids = [value for key, value in allowed if key == "account"]
-    provider_account_ids = iter(unrewrite_ids(raw_account_ids))
+
+
+def _route_requests(
+    config: Config, params: Sequence[tuple[str, str]]
+) -> list[tuple[Provider, Sequence[tuple[str, str]]]]:
+    """Split one client request into the per-provider requests that answer it."""
+    shared = [(key, value) for key, value in params if key != "account"]
+    account_ids = [value for key, value in params if key == "account"]
+    if not account_ids:
+        return [(provider, shared) for provider in config.providers]
+
+    owned: defaultdict[str, list[str]] = defaultdict(list)
+    for account_id in account_ids:
+        resolved = resolve_provider_for_account(account_id, config.providers)
+        if resolved is None:
+            # %r so that a newline in an id cannot forge a log line of its own.
+            logger.warning("account id %r matches no configured provider prefix", account_id)
+            continue
+        provider, provider_account_id = resolved
+        owned[provider.key].append(provider_account_id)
+    # Iterating in configured provider order so that the order of accounts in
+    # the response is consistent, regardless of the order in the request.
     return [
-        (key, next(provider_account_ids)) if key == "account" else (key, value)
-        for key, value in allowed
+        (
+            provider,
+            [
+                *shared,
+                *(("account", account_id) for account_id in dict.fromkeys(owned[provider.key])),
+            ],
+        )
+        for provider in config.providers
+        if provider.key in owned
     ]
 
 
@@ -153,7 +171,10 @@ def create_app(
 
     Raises rather than starting a server that cannot work: an unclaimed
     provider or a stored access URL that no longer matches its provider's root
-    is reported here, before uvicorn starts, not on the first request.
+    is reported here, before uvicorn starts, not on the first request. One
+    such provider stops the whole server, including the providers that are
+    claimed and would work, and only the first is named. This is all-or-nothing
+    where a provider that fails a live request costs only its own accounts.
 
     The app token store is named by path rather than read here, because unlike
     the config it is live state: every request that authenticates reads it, so
@@ -200,24 +221,21 @@ def create_app(
     @app.get("/simplefin/accounts", dependencies=[Depends(require_client_auth)])
     async def accounts(request: Request) -> Response:  # pyright: ignore [reportUnusedFunction]
         state = _get_app_state(request)
-
-        params = _forwarded_accounts_params(request)
-        account_ids = [value for key, value in params if key == "account"]
-        providers_to_query = _providers_to_query(config, account_ids)
+        requests = _route_requests(config, _forwarded_accounts_params(request))
 
         responses = await fetch_all(
-            state.provider_clients, providers_to_query, "/accounts", params, state.request_counter
+            state.provider_clients, requests, "/accounts", state.request_counter
         )
-        # No prefix: one provider needs no namespace to be distinguished from
-        # another, and giving it one would re-identify every account the client
-        # app already holds.
-        merged = merge([("", response) for response in responses])
+        merged = merge(
+            [
+                (provider.prefix, response)
+                for (provider, _), response in zip(requests, responses, strict=True)
+            ]
+        )
         # Always respond 200, even if a provider did not. A provider's failure is reported via the
         # body's `errors`, which is what v1 provides that array for.
         return Response(
-            content=rewrite_ids(merged.body),
-            status_code=HTTPStatus.OK,
-            media_type="application/json",
+            content=merged.body, status_code=HTTPStatus.OK, media_type="application/json"
         )
 
     @app.get("/simplefin/info")

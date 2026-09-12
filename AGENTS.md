@@ -100,6 +100,23 @@ falsify one without going anywhere near the sentence that makes it.
   deliberate improvement as a concession. The history has a home: the commit
   message, and for a finding's disposition, the reply to the reviewer. This
   governs `docs/` too. `docs/ARCHITECTURE.md` is a map of what is.
+- **One fact, one home: the map points, it does not restate.** A fact goes in
+  the lowest place that can hold it. Lowest is code that cannot be read any
+  other way — a name, a type, a structure. Above that is a docstring or comment
+  on the thing the fact is about, which is where a reader of that file will
+  look. `docs/ARCHITECTURE.md` is for what no single file can hold: how two
+  modules' guarantees depend on each other, an invariant that holds across
+  them, a property of a configuration rather than of any code. A fresh decision
+  feels like the most important thing about the system, which is the pull that
+  puts it a rung too high — and then in the map *as well as* the code, since
+  the map is the nearest blank space. Two tests can help with finding a second
+  copy. *The move test*: a paragraph that could be cut and pasted into one
+  module's docstring without losing anything belongs there. *The provenance
+  test*: a paragraph written from the task's brief rather than from something
+  read in the code is a decision record with no durable home yet, so place it
+  by the ladder above rather than assume it is held — a brief is scratch and
+  will be deleted, and a commit message answers why the code *changed*, not why
+  it *is*.
 - **Commit messages are for someone in `git log` asking why the code looks
   like this.** Lead with the point, organize by topic, and rewrite from the
   current state rather than appending each round's news.
@@ -145,10 +162,15 @@ Each step ends with this cycle:
    sentence whose subject the change deleted is stale while every word in it
    stays true, and a guarantee the change made load-bearing in a new place
    belongs in the list that names it. So read the sections your delta touches,
-   not only the ones it argues with. A task whose brief defers this to a final
-   documentation step is the one exception, and only because the brief says so
-   in writing — tell every reviewer that, or they will each report the same
-   stale paragraph.
+   not only the ones it argues with. Describing is not retelling: "one fact,
+   one home" above is how this obligation is discharged, and a new section is
+   warranted only when the step introduced something no existing section is
+   about. A brief may schedule a final read of the file as a whole, because
+   steps that each land locally-correct prose can still add up to something
+   repetitive or badly ordered. A brief that defers the describing itself is
+   buggy, whatever it says in writing: fix the brief. A map that is wrong for
+   three steps running is worse than no map, and every reviewer of every step
+   will report the same stale paragraph.
 2. **Present the work to the user, then stop.** This is a gate, not a
    courtesy: end the turn and wait for a reply. Their review routinely changes
    scope or direction, so a review launched first is spent on a version that

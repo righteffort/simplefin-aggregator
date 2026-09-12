@@ -40,6 +40,20 @@ key = "my-bank"
 ACCESS_URL = "https://user:s3cret-provider-password@provider.example.com/simplefin"
 
 
+SECOND_PROVIDER_TOML = (
+    VALID_TOML
+    + """
+[[custom_providers]]
+key = "other-bank"
+label = "Other Bank"
+root = "https://other.example.com/simplefin"
+
+[[providers]]
+key = "other-bank"
+"""
+)
+
+
 def _write_config(tmp_path: Path, contents: str) -> Path:
     config_path = tmp_path / "config.toml"
     _ = config_path.write_text(contents)
@@ -161,6 +175,21 @@ def test_serve_fails_when_the_provider_has_not_been_claimed(
     assert result.exit_code == 1
     assert calls == []
     assert "no access URL stored for provider 'my-bank'" in result.stderr
+
+
+def test_serve_fails_when_one_of_several_providers_has_not_been_claimed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Any unclaimed provider stops the server from starting."""
+    _ = _write_config(tmp_path, SECOND_PROVIDER_TOML)
+    _claim(tmp_path)
+    calls = _fake_uvicorn(monkeypatch)
+
+    result = runner.invoke(cli.app, _serve_args(tmp_path))
+
+    assert result.exit_code == 1
+    assert calls == [], "the claimed provider gets no server of its own"
+    assert "no access URL stored for provider 'other-bank'" in result.stderr
 
 
 def test_serve_fails_when_the_stored_access_url_no_longer_matches_the_root(

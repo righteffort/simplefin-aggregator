@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
+from itertools import permutations
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit
 
 from platformdirs import user_config_dir
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-from .provider_registry import ProviderEntry, find_provider, merged_providers
+from .provider_registry import KEY_PATTERN, ProviderEntry, find_provider, merged_providers
 from .state_file import describe_validation_failure, warn_if_permissive
 from .url_validation import UrlValidationError, is_loopback_host, parse_root
 
@@ -20,6 +22,9 @@ if TYPE_CHECKING:
 
 
 APP_NAME = "simplefin-aggregator"
+
+# Characters that need no escaping in query parameters.
+PREFIX_PATTERN = re.compile(r"[A-Za-z0-9._:-]*")
 
 
 class ConfigError(Exception):
@@ -33,6 +38,36 @@ class Provider(BaseModel):
     # provider everywhere: as the store's key, as the provider client dict's
     # key, and in log lines.
     key: str
+    # What this provider's account ids carry when the client app sees them, and
+    # what routes an inbound `?account=` back to this provider. Defaulted so
+    # that an entry whose key cannot derive one is reported against the key
+    # alone, rather than also as a missing field the config file never had.
+    prefix: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_prefix_to_the_key(cls, data: object) -> object:
+        """Default the prefix to `f"{key}:"`, leaving an explicit blank one alone."""
+        if not isinstance(data, dict):
+            return data
+        entry = cast("dict[str, object]", data)
+        key = entry.get("key")
+        if "prefix" in entry or not isinstance(key, str):
+            return entry
+        # A bad key would derive a bad prefix, reporting the key's fault
+        # against the prefix. Leave it to the key's own check.
+        if not KEY_PATTERN.fullmatch(key):
+            return entry
+        return {**entry, "prefix": f"{key}:"}
+
+    @field_validator("prefix")
+    @classmethod
+    def _validate_prefix(cls, value: str) -> str:
+        """Constrain a prefix, without quoting the rejected value back."""
+        if not PREFIX_PATTERN.fullmatch(value):
+            msg = f"a provider prefix must match {PREFIX_PATTERN.pattern}"
+            raise ValueError(msg)
+        return value
 
 
 def _parse_root_or_value_error(raw: str) -> NormalizedUrl:
@@ -82,16 +117,14 @@ class CustomProvider(BaseModel):
 class Config(BaseModel):
     """The parsed config file.
 
-    Treated as read-only once `load_config` returns: nothing mutates a Config
-    and nothing reloads one, so validators here may establish invariants --
-    see _check_provider_keys -- that hold for the object's whole lifetime.
+    Read-only once `load_config` returns: nothing mutates a Config and nothing
+    reloads one, so validators here establish invariants that hold for the
+    object's lifetime.
     """
 
     bind_host: str = "127.0.0.1"
     bind_port: int = 8080
-    # Schema and internal types are already a list for the multi-provider version to come;
-    # this version only supports exactly one.
-    providers: list[Provider] = Field(min_length=1, max_length=1)
+    providers: list[Provider] = Field(min_length=1)
     custom_providers: list[CustomProvider] = []
     base_url: str
 
@@ -101,14 +134,33 @@ class Config(BaseModel):
 
     @model_validator(mode="after")
     def _check_provider_keys(self) -> Config:
-        """Fail at load time on a key no provider defines.
-
-        Checked here rather than at first use so that a dangling reference is
-        reported by every command, not just the one that would dereference it.
-        """
+        """Fail at load time on a key no provider defines, or on one named twice."""
         entries = self.provider_entries()
+        seen: set[str] = set()
         for provider in self.providers:
-            _ = find_provider(entries, provider.key)
+            _ = find_provider(entries, provider.key)  # raises on a key no entry defines
+            if provider.key in seen:
+                msg = f"provider key {provider.key!r} appears more than once in providers"
+                raise ValueError(msg)
+            seen.add(provider.key)
+        return self
+
+    @model_validator(mode="after")
+    def _check_provider_prefixes(self) -> Config:
+        """Keep the prefix set unambiguous, so an inbound account id has one owner."""
+        blank = [provider.key for provider in self.providers if not provider.prefix]
+        if len(blank) > 1:
+            named = ", ".join(repr(key) for key in blank)
+            msg = f"at most one provider may have a blank prefix; {named} all do"
+            raise ValueError(msg)
+        named_prefixes = [provider for provider in self.providers if provider.prefix]
+        for one, other in permutations(named_prefixes, 2):
+            if other.prefix.startswith(one.prefix):
+                msg = (
+                    f"provider {one.key!r}'s prefix is a prefix of provider {other.key!r}'s, "
+                    "so an account id would not say which of them it came from"
+                )
+                raise ValueError(msg)
         return self
 
     @field_validator("base_url")

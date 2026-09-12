@@ -155,11 +155,11 @@ def test_every_way_of_failing_is_the_same_failure(
 
 
 def test_a_failed_provider_is_logged_and_not_reported(caplog: pytest.LogCaptureFixture) -> None:
-    """Behavior, not a requirement: step D1 reports a failure from the accounts it remembers.
+    """Behavior, not a requirement: a failed provider puts nothing in the body.
 
-    Until it does, a bare string naming the provider tells a client app nothing
-    it can act on, so nothing is put in the body. The diagnostic goes to the
-    log, and the exception text stays there.
+    A bare string naming the provider tells a client app nothing it can act on,
+    so nothing is put in the body. The diagnostic goes to the log, and the
+    exception text stays there.
     """
     with caplog.at_level(logging.WARNING):
         accounts, errors = _merged(

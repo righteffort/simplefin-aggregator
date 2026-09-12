@@ -41,6 +41,17 @@ reviews:
           and anything that survives normalization is meant to fail to match
           rather than be repaired.
         - Dereferencing an account's `currency` field as a URL.
+        - Treating a provider key or an account id as a secret. Neither is in
+          the secret class above, and both are deliberately rendered. A
+          provider key is a machine identifier constrained to `[a-z0-9-]+` by
+          `ProviderEntry.__post_init__`, through which every entry passes; that
+          constraint is what makes a key safe to name in a message, so a
+          message reached only after it cannot be carrying a pasted secret. An
+          account id is rendered in exactly two log lines, named in
+          `ARCHITECTURE.md`'s secrets item 5; both use `%r` so a newline cannot
+          forge a log line, and the operator needs the id to act on the
+          warning. Do not propose replacing either with a fixed string, a
+          count, or a digest.
         - Multi-tenancy, rate limiting, and credential encryption at rest
           beyond correct file permissions.
 
