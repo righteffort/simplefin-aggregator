@@ -18,12 +18,13 @@ def build_provider_client(
 ) -> httpx2.AsyncClient:
     """One AsyncClient per provider. Credentials go via `auth=`, not the URL."""
     return httpx2.AsyncClient(
-        # The one place `origin_and_path` feeds a network request, against
-        # url_validation.py's "never fetch it" rule. It holds here because
-        # httpx2 joins request paths onto `base_url` rather than fetching it as
-        # given; because this value is always a validated access URL and never
-        # a provider root, so it carries no synthesized trailing slash; and
-        # because the credentials it deliberately omits are supplied below.
+        # One of two places `origin_and_path` feeds a network request (the
+        # other is `cli.py`'s post-claim probe), against url_validation.py's
+        # "never fetch it" rule. It holds here because httpx2 joins request
+        # paths onto `base_url` rather than fetching it as given; because this
+        # value is always a validated access URL and never a provider root, so
+        # it carries no synthesized trailing slash; and because the
+        # credentials it deliberately omits are supplied below.
         base_url=access_url.origin_and_path,
         auth=(access_url.username, access_url.password),
         timeout=timeout,

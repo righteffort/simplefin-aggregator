@@ -467,6 +467,10 @@ cli.claim
        - non-200  -> status only, never the body (3xx lands here too)
   -> validate_access_url(entry.root, response.text.strip(), ...)
   -> save_access_url(store, entry.key, access_url)
+  -> _probe_access_url(access_url): GET /accounts?balances-only=1, one attempt
+       "Checking that the credentials work..." on stderr, then:
+       success    -> nothing further printed
+       failure    -> "warning: could not confirm ..."; exit code stays 0
   -> warn if no [[providers]] entry names this key
 ```
 
@@ -497,10 +501,10 @@ A claim for a provider the config's `[[providers]]` does not name still
 succeeds and is stored — it just warns, since `serve` would otherwise report it
 as unclaimed later.
 
-`_build_claim_client` is a seam purely for test injection (see Testing below)
-— not a general dependency-injection pattern used elsewhere in this codebase.
-This sync `httpx2.Client` is the one legitimate non-async HTTP call in the
-project.
+`_build_claim_client` and `_build_probe_client` are seams purely for test
+injection (see Testing below) — not a general dependency-injection pattern
+used elsewhere in this codebase. These two sync `httpx2.Client`s are the only
+non-async HTTP calls in the project.
 
 ### CLI `app new` / `regen` / `revoke` (obtaining/revoking *this aggregator's* tokens)
 
@@ -759,9 +763,10 @@ It is not enough by itself, because a provider chooses what a failed exchange
 looks like and httpx2 quotes the wire in the exception it raises. A provider
 that echoes back the `Authorization` header it was given, or the path it was
 called on, puts that value inside a protocol error's text. So a failed request
-is reported by the exception's class and never by its message: `transport.fetch`
-and `cli.claim` both render `type(exc).__name__`, and each has a leak corpus
-entry driving a real socket that hands back what it was sent.
+is reported by the exception's class and never by its message: `transport.fetch`,
+`cli.claim`, and `cli`'s post-claim probe all render `type(exc).__name__`, and
+each has a leak corpus entry driving a real socket that hands back what it was
+sent.
 
 ## Testing conventions
 

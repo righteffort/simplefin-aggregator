@@ -129,6 +129,12 @@ def _decode_setup_token(setup_token: str) -> str:
 
 def _claim_access_url(claim_url: NormalizedUrl, entry: ProviderEntry) -> str:
     """POST the claim URL and return the access URL the provider replies with."""
+    # Whether this reached the provider is unknown, so retrying with the same
+    # token is safe advice here; the 403 case below is definite and gets none.
+    retry_advice = (
+        "This request is not retried automatically. Run `claim` again with the "
+        "same setup token: it is still valid unless the provider already spent it."
+    )
     with _build_claim_client() as claim_client:
         try:
             # origin_and_path, not the string the token decoded to: it is the
@@ -138,7 +144,10 @@ def _claim_access_url(claim_url: NormalizedUrl, entry: ProviderEntry) -> str:
         except httpx2.HTTPError as exc:
             # Not the message: httpx2's text can quote provider-chosen bytes,
             # and the request path here is the live setup token.
-            _fail(f"error: could not reach provider {entry.key!r} ({type(exc).__name__})")
+            _fail(
+                f"error: could not reach provider {entry.key!r} ({type(exc).__name__})",
+                retry_advice,
+            )
 
     if response.status_code == HTTPStatus.FORBIDDEN:
         already_claimed = (
@@ -150,12 +159,52 @@ def _claim_access_url(claim_url: NormalizedUrl, entry: ProviderEntry) -> str:
         # The status alone. A response body is attacker-influenced, and this
         # path now also catches the 3xx that redirects-disabled turns into a
         # failure rather than a hop.
-        _fail(f"error: claim failed: provider {entry.key!r} answered {response.status_code}")
+        _fail(
+            f"error: claim failed: provider {entry.key!r} answered {response.status_code}",
+            retry_advice,
+        )
 
     # Stripped, since a provider that ends the body with a newline means the
     # URL and not a URL with a control character in it, which is what
     # validation would otherwise see.
     return response.text.strip()
+
+
+_PROBE_TIMEOUT = httpx2.Timeout(10.0)
+
+
+def _build_probe_client(access_url: NormalizedUrl) -> httpx2.Client:
+    """Overridden in tests to inject an httpx2.MockTransport."""
+    return httpx2.Client(
+        base_url=access_url.origin_and_path,
+        auth=(access_url.username, access_url.password),
+        follow_redirects=False,
+    )
+
+
+def _probe_access_url(access_url: NormalizedUrl) -> str | None:
+    """GET /accounts?balances-only=1 once, to check the credentials work. None on success.
+
+    One attempt, bounded by _PROBE_TIMEOUT so a dead provider does not turn
+    `claim` into a hang -- like the claim POST, and unlike it not retried
+    because there is nothing irreversible to protect here: the access URL is
+    already stored either way, so a failed check costs the user nothing they
+    cannot repeat by hand.
+    """
+    typer.echo("Checking that the credentials work...", err=True)
+    try:
+        with _build_probe_client(access_url) as probe_client:
+            response = probe_client.get(
+                "/accounts", params={"balances-only": "1"}, timeout=_PROBE_TIMEOUT
+            )
+    except httpx2.HTTPError as exc:
+        # Not str(exc): see _claim_access_url -- the same provider-chosen
+        # bytes, including a possibly-echoed Authorization header, can end up
+        # in httpx2's exception text.
+        return f"could not reach {access_url.origin} ({type(exc).__name__})"
+    if response.status_code == HTTPStatus.OK:
+        return None
+    return f"{access_url.origin} answered HTTP {response.status_code}"
 
 
 @app.command()
@@ -204,7 +253,9 @@ def claim(
     access_url = SecretStr(_claim_access_url(claim_url, entry))
 
     try:
-        _ = validate_access_url(entry.root, access_url.get_secret_value(), provider=entry.key)
+        validated_access_url = validate_access_url(
+            entry.root, access_url.get_secret_value(), provider=entry.key
+        )
     except UrlValidationError as exc:
         _fail(f"error: {exc}")
 
@@ -215,6 +266,13 @@ def claim(
 
     typer.echo(f"Claimed {entry.label} as key {entry.key!r}.")
     typer.echo(f"note: its access URL is now in {store_path}.", err=True)
+
+    # A warning, not a failure: the access URL is stored and valid, and the
+    # setup token is spent and cannot be re-claimed if this exits non-zero.
+    probe_failure = _probe_access_url(validated_access_url)
+    if probe_failure is not None:
+        could_not_confirm = f"warning: could not confirm the access URL works ({probe_failure})"
+        typer.echo(f"{could_not_confirm}; it is stored anyway.", err=True)
 
     if entry.key not in {provider.key for provider in loaded_config.providers}:
         # serve reads the store by the key its config names, so a

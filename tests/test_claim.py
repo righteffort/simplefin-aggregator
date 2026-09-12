@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 
     from typer.testing import Result
 
+    from simplefin_aggregator.url_validation import NormalizedUrl
+
 runner = CliRunner()
 
 PROVIDER_KEY = "my-bank"
@@ -72,6 +74,28 @@ def _install_provider(
         )
 
     monkeypatch.setattr(cli, "_build_claim_client", build_client)
+    return requested
+
+
+def _install_probe(
+    monkeypatch: pytest.MonkeyPatch, handler: Callable[[httpx2.Request], httpx2.Response]
+) -> list[str]:
+    """Answer the post-claim probe GET with `handler`, returning the paths it is asked for."""
+    requested: list[str] = []
+
+    def recording_handler(request: httpx2.Request) -> httpx2.Response:
+        requested.append(str(request.url))
+        return handler(request)
+
+    def build_client(access_url: NormalizedUrl) -> httpx2.Client:
+        return httpx2.Client(
+            transport=httpx2.MockTransport(recording_handler),
+            base_url=access_url.origin_and_path,
+            auth=(access_url.username, access_url.password),
+            follow_redirects=False,
+        )
+
+    monkeypatch.setattr(cli, "_build_probe_client", build_client)
     return requested
 
 
@@ -156,7 +180,9 @@ def _stored(tmp_path: Path) -> dict[str, str]:
 
 @pytest.fixture
 def claim_succeeds(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    return _install_provider(monkeypatch, _responds(200, ACCESS_URL))
+    requested = _install_provider(monkeypatch, _responds(200, ACCESS_URL))
+    _ = _install_probe(monkeypatch, _responds(200, "{}"))
+    return requested
 
 
 def test_claim_stores_the_access_url_under_the_selected_providers_key(
@@ -417,22 +443,47 @@ def test_claim_reports_a_rejected_token_as_possibly_compromised(
     assert requested == [CLAIM_URL]
     assert "403" in result.stderr
     assert "revoked at the provider" in result.stderr
+    assert "Run `claim` again" not in result.stderr, (
+        "a 403 already says the token is spent -- retrying it is not useful advice"
+    )
     assert "already used" not in result.output, "a provider's response body is not echoed"
 
 
 def test_claim_with_unreachable_provider_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Requirement: the claim POST is never retried, whatever the failure, and
+    a transport failure is one of the cases advising the user to run `claim`
+    again with the same token.
+    """
+
     def handler(request: httpx2.Request) -> httpx2.Response:
         msg = "connection refused"
         raise httpx2.ConnectError(msg, request=request)
 
-    _ = _install_provider(monkeypatch, handler)
+    requested = _install_provider(monkeypatch, handler)
 
     result = _run_claim(tmp_path, SETUP_TOKEN)
 
     assert result.exit_code == 1
     assert "could not reach" in result.stderr
+    assert len(requested) == 1, "one attempt, not a retry loop"
+    assert "Run `claim` again" in result.stderr
+    assert _stored(tmp_path) == {}
+
+
+def test_claim_with_a_non_ok_non_forbidden_status_tells_the_user_to_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A status other than 200/403 is as ambiguous as a transport failure: retry is safe."""
+    requested = _install_provider(monkeypatch, _responds(500))
+
+    result = _run_claim(tmp_path, SETUP_TOKEN)
+
+    assert result.exit_code == 1
+    assert "500" in result.stderr
+    assert len(requested) == 1
+    assert "Run `claim` again" in result.stderr
     assert _stored(tmp_path) == {}
 
 
@@ -463,6 +514,7 @@ def test_claim_tolerates_a_provider_that_ends_the_access_url_with_a_newline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _ = _install_provider(monkeypatch, _responds(200, f"{ACCESS_URL}\n"))
+    _ = _install_probe(monkeypatch, _responds(200, "{}"))
 
     result = _run_claim(tmp_path, SETUP_TOKEN)
 
@@ -510,3 +562,87 @@ def test_a_provider_key_that_is_a_pasted_secret_does_not_come_back_on_stderr(
     assert SETUP_TOKEN not in result.stderr
     assert SETUP_TOKEN not in result.stdout
     assert claim_succeeds == []
+
+
+def test_claim_probes_the_stored_access_url_with_balances_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The probe is a `/accounts` GET over the just-stored credentials, discarding transactions."""
+    _ = _install_provider(monkeypatch, _responds(200, ACCESS_URL))
+    probed = _install_probe(monkeypatch, _responds(200, "{}"))
+
+    result = _run_claim(tmp_path, SETUP_TOKEN)
+
+    assert result.exit_code == 0
+    assert probed == [f"{PROVIDER_ROOT}/accounts?balances-only=1"]
+    assert "warning" not in result.stderr
+
+
+def test_a_failing_probe_warns_and_exits_zero_but_keeps_the_stored_access_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Requirement: a broken probe is not a failed claim -- the access URL is already spent for."""
+    _ = _install_provider(monkeypatch, _responds(200, ACCESS_URL))
+    _ = _install_probe(monkeypatch, _responds(500))
+
+    result = _run_claim(tmp_path, SETUP_TOKEN)
+
+    assert result.exit_code == 0
+    assert "warning" in result.stderr
+    assert "500" in result.stderr
+    assert _stored(tmp_path) == {PROVIDER_KEY: ACCESS_URL}
+
+
+def test_the_probe_is_not_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Requirement: one attempt, succeed or fail -- unlike the claim POST, by choice."""
+    _ = _install_provider(monkeypatch, _responds(200, ACCESS_URL))
+    probed = _install_probe(monkeypatch, _responds(500))
+
+    result = _run_claim(tmp_path, SETUP_TOKEN)
+
+    assert result.exit_code == 0
+    assert "warning" in result.stderr
+    assert len(probed) == 1
+
+
+def test_the_probe_does_not_run_when_the_claim_post_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _ = _install_provider(monkeypatch, _responds(403, "already used"))
+    probed = _install_probe(monkeypatch, _responds(200, "{}"))
+
+    result = _run_claim(tmp_path, SETUP_TOKEN)
+
+    assert result.exit_code == 1
+    assert probed == [], "no access URL was stored, so there is nothing to confirm"
+
+
+def _echo_the_probes_basic_auth_password(request_text: str) -> str:
+    """Compose a status line carrying back the password the probe just sent."""
+    credentials = "no-credentials-seen"
+    for line in request_text.split("\r\n"):
+        if line.lower().startswith("authorization: basic "):
+            credentials = base64.b64decode(line.split(" ", 2)[2]).decode()
+    return f"NOT-HTTP {credentials}"
+
+
+def test_a_provider_cannot_leak_its_credential_via_the_probes_malformed_reply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Requirement: nothing a provider puts on the wire during the probe is rendered."""
+    with echoing_provider(_echo_the_probes_basic_auth_password) as (port, echoed):
+        root = f"http://127.0.0.1:{port}/simplefin"
+        config = CONFIG_TOML.replace(PROVIDER_ROOT, root)
+        access_url = f"http://user:{PROVIDER_PASSWORD}@127.0.0.1:{port}/simplefin"
+        _ = _install_provider(monkeypatch, _responds(200, access_url))
+        token = base64.b64encode(f"{root}/claim/some-setup-token".encode("ascii")).decode("ascii")
+
+        result = _run_claim(tmp_path, token, config=config)
+
+    assert echoed == [f"NOT-HTTP user:{PROVIDER_PASSWORD}"], (
+        "the provider did hand the credential back, which is what the rest of this tests"
+    )
+    assert result.exit_code == 0
+    assert "warning" in result.stderr
+    assert "RemoteProtocolError" in result.stderr
+    assert PROVIDER_PASSWORD not in result.output
