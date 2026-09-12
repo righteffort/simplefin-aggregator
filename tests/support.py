@@ -17,7 +17,7 @@ from simplefin_aggregator.app_tokens import (
     new_app_token,
     update_app_tokens,
 )
-from simplefin_aggregator.config import Config
+from simplefin_aggregator.config import Config, config_from_mapping
 
 
 if TYPE_CHECKING:
@@ -81,7 +81,7 @@ def make_config(*providers: ProviderSpec, base_url: str = "http://127.0.0.1:8080
     Given no providers, the one shared fixture provider.
     """
     specs = providers or (ProviderSpec(),)
-    return Config.model_validate(
+    return config_from_mapping(
         {
             "base_url": base_url,
             "providers": [

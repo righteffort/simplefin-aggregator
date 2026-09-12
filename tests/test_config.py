@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import stat
+from dataclasses import fields
 from typing import TYPE_CHECKING
 
 import pytest
 
-from simplefin_aggregator.config import Config, ConfigError, load_config
+from simplefin_aggregator.config import (
+    Config,
+    ConfigCheckError,
+    ConfigError,
+    Provider,
+    _ConfigModel,  # pyright: ignore[reportPrivateUsage] # the parity test is about this module's internals
+    load_config,
+)
 from simplefin_aggregator.provider_registry import KNOWN_PROVIDERS
 
 
@@ -337,13 +345,38 @@ def test_the_config_holds_no_credential_to_redact(tmp_path: Path) -> None:
     """
     config = load_config(_write(tmp_path, VALID_TOML))
 
-    assert set(type(config).model_fields) == {
+    assert {field.name for field in fields(config)} == {
         "bind_host",
         "bind_port",
         "providers",
         "custom_providers",
         "base_url",
     }
+
+
+def test_a_config_built_by_hand_is_checked_like_one_read_from_a_file() -> None:
+    """Requirement: no Config exists that fails the checks, however it was built."""
+    ambiguous = (Provider(key="redbark", prefix=""), Provider(key="lunchflow", prefix=""))
+
+    with pytest.raises(ConfigCheckError, match="blank prefix"):
+        _ = Config(
+            bind_host="127.0.0.1",
+            bind_port=8080,
+            providers=ambiguous,
+            custom_providers=(),
+            base_url="https://example.com",
+        )
+
+
+def test_a_provider_built_by_hand_may_not_carry_an_unescapable_prefix() -> None:
+    """Requirement: a prefix travels in a query parameter wherever the Provider came from."""
+    with pytest.raises(ConfigCheckError, match="must match"):
+        _ = Provider(key="bank-a", prefix="a b")
+
+
+def test_every_field_of_the_file_reaches_the_resolved_config() -> None:
+    """Requirement: the two shapes carry the same fields, so resolving drops nothing."""
+    assert set(_ConfigModel.model_fields) == {field.name for field in fields(Config)}
 
 
 def test_provider_entries_are_the_built_in_ones_plus_the_config_s(tmp_path: Path) -> None:

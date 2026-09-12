@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 def _provider(key: str) -> Provider:
-    return Provider.model_validate({"key": key})
+    return Provider(key=key, prefix=f"{key}:")
 
 
 def _client_for(name: str, handler: MockHandler) -> httpx2.AsyncClient:

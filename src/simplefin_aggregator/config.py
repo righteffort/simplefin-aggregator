@@ -1,23 +1,32 @@
-"""Configuration model and loading for simplefin-aggregator."""
+"""Configuration model and loading for simplefin-aggregator.
+
+Exposes public types `Config` and `Provider`, in which every field is typed and
+never None. These are built from `_ConfigModel` and `_ProviderFileEntry`, which
+represent the file as written, where a field may be absent and mean something by
+it.
+"""
 
 from __future__ import annotations
 
 import re
 import tomllib
+from dataclasses import dataclass
 from itertools import permutations
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar
 from urllib.parse import urlsplit
 
 from platformdirs import user_config_dir
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from .provider_registry import KEY_PATTERN, ProviderEntry, find_provider, merged_providers
+from .provider_registry import ProviderEntry, ProviderRegistryError, find_provider, merged_providers
 from .state_file import describe_validation_failure, warn_if_permissive
 from .url_validation import UrlValidationError, is_loopback_host, parse_root
 
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+
     from .url_validation import NormalizedUrl
 
 
@@ -31,43 +40,44 @@ class ConfigError(Exception):
     """Raised when the config file is missing, malformed, or fails validation."""
 
 
-class Provider(BaseModel):
-    """A single SimpleFIN provider this aggregator proxies."""
+class ConfigCheckError(ValueError):
+    """A config that parsed but describes something this application cannot run."""
+
+
+class _ProviderFileEntry(BaseModel):
+    """One `[[providers]]` entry exactly as the config file spells it."""
 
     # A provider key, built-in or from `custom_providers` below. It identifies the
     # provider everywhere: as the store's key, as the provider client dict's
     # key, and in log lines.
     key: str
-    # What this provider's account ids carry when the client app sees them, and
-    # what routes an inbound `?account=` back to this provider. Defaulted so
-    # that an entry whose key cannot derive one is reported against the key
-    # alone, rather than also as a missing field the config file never had.
-    prefix: str = ""
-
-    @model_validator(mode="before")
-    @classmethod
-    def _default_prefix_to_the_key(cls, data: object) -> object:
-        """Default the prefix to `f"{key}:"`, leaving an explicit blank one alone."""
-        if not isinstance(data, dict):
-            return data
-        entry = cast("dict[str, object]", data)
-        key = entry.get("key")
-        if "prefix" in entry or not isinstance(key, str):
-            return entry
-        # A bad key would derive a bad prefix, reporting the key's fault
-        # against the prefix. Leave it to the key's own check.
-        if not KEY_PATTERN.fullmatch(key):
-            return entry
-        return {**entry, "prefix": f"{key}:"}
+    # None means the file said nothing, and `_resolve` supplies `f"{key}:"`.
+    # "" means the operator asked for the blank catch-all, and is left alone.
+    prefix: str | None = None
 
     @field_validator("prefix")
     @classmethod
-    def _validate_prefix(cls, value: str) -> str:
-        """Constrain a prefix, without quoting the rejected value back."""
-        if not PREFIX_PATTERN.fullmatch(value):
+    def _validate_prefix(cls, value: str | None) -> str | None:
+        """Constrain a written prefix, without quoting the rejected value back."""
+        if value is not None and not PREFIX_PATTERN.fullmatch(value):
             msg = f"a provider prefix must match {PREFIX_PATTERN.pattern}"
             raise ValueError(msg)
         return value
+
+
+@dataclass(frozen=True)
+class Provider:
+    """A single SimpleFIN provider this aggregator proxies."""
+
+    key: str
+    # What this provider's account ids carry when the client app sees them, and
+    # what routes an inbound `?account=` back to this provider.
+    prefix: str
+
+    def __post_init__(self) -> None:
+        if not PREFIX_PATTERN.fullmatch(self.prefix):
+            msg = f"a provider prefix must match {PREFIX_PATTERN.pattern}"
+            raise ConfigCheckError(msg)
 
 
 def _parse_root_or_value_error(raw: str) -> NormalizedUrl:
@@ -84,12 +94,14 @@ def _parse_root_or_value_error(raw: str) -> NormalizedUrl:
 
 
 class CustomProvider(BaseModel):
-    """A provider this config adds to the built-in list.
+    """A provider this config adds to the built-in list. Immutable.
 
     Editing this entry in the config file is deliberately the only way
     to add one -- see `provider_registry.py` for why there is no flag
     and no prompt.
     """
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     key: str
     label: str
@@ -114,54 +126,14 @@ class CustomProvider(BaseModel):
         )
 
 
-class Config(BaseModel):
-    """The parsed config file.
-
-    Read-only once `load_config` returns: nothing mutates a Config and nothing
-    reloads one, so validators here establish invariants that hold for the
-    object's lifetime.
-    """
+class _ConfigModel(BaseModel):
+    """The config file as written, before any field is resolved."""
 
     bind_host: str = "127.0.0.1"
     bind_port: int = 8080
-    providers: list[Provider] = Field(min_length=1)
+    providers: list[_ProviderFileEntry] = Field(min_length=1)
     custom_providers: list[CustomProvider] = []
     base_url: str
-
-    def provider_entries(self) -> tuple[ProviderEntry, ...]:
-        """Every provider a token may be claimed from: the built-in ones plus this config's."""
-        return merged_providers(entry.as_provider_entry() for entry in self.custom_providers)
-
-    @model_validator(mode="after")
-    def _check_provider_keys(self) -> Config:
-        """Fail at load time on a key no provider defines, or on one named twice."""
-        entries = self.provider_entries()
-        seen: set[str] = set()
-        for provider in self.providers:
-            _ = find_provider(entries, provider.key)  # raises on a key no entry defines
-            if provider.key in seen:
-                msg = f"provider key {provider.key!r} appears more than once in providers"
-                raise ValueError(msg)
-            seen.add(provider.key)
-        return self
-
-    @model_validator(mode="after")
-    def _check_provider_prefixes(self) -> Config:
-        """Keep the prefix set unambiguous, so an inbound account id has one owner."""
-        blank = [provider.key for provider in self.providers if not provider.prefix]
-        if len(blank) > 1:
-            named = ", ".join(repr(key) for key in blank)
-            msg = f"at most one provider may have a blank prefix; {named} all do"
-            raise ValueError(msg)
-        named_prefixes = [provider for provider in self.providers if provider.prefix]
-        for one, other in permutations(named_prefixes, 2):
-            if other.prefix.startswith(one.prefix):
-                msg = (
-                    f"provider {one.key!r}'s prefix is a prefix of provider {other.key!r}'s, "
-                    "so an account id would not say which of them it came from"
-                )
-                raise ValueError(msg)
-        return self
 
     @field_validator("base_url")
     @classmethod
@@ -189,6 +161,91 @@ class Config(BaseModel):
             msg = "base_url must use https unless the host is a literal loopback IP address"
             raise ValueError(msg)
         return value
+
+
+@dataclass(frozen=True)
+class Config:
+    """The parsed config file, with every field resolved to what the code uses.
+
+    Frozen, and nothing reloads one, so the checks `__post_init__` runs hold
+    for the object's lifetime. No field here takes a default: defaults belong
+    on `_ConfigModel`, so that a field `_resolve` forgets fails to compile.
+    The reverse -- a field on `_ConfigModel` that `_resolve` drops -- would be
+    accepted from the file and silently ignored, so the two field sets are
+    pinned equal by a test.
+    """
+
+    bind_host: str
+    bind_port: int
+    providers: tuple[Provider, ...]
+    custom_providers: tuple[CustomProvider, ...]
+    base_url: str
+
+    def __post_init__(self) -> None:
+        """Run the checks that span providers, so no Config exists that fails them.
+
+        Here and not in `_resolve`, because `Config(...)` is public: a check on
+        the parsing path alone would be a rule to remember, not a property.
+        """
+        _check_provider_keys(self.provider_entries(), (p.key for p in self.providers))
+        _check_provider_prefixes(self.providers)
+
+    def provider_entries(self) -> tuple[ProviderEntry, ...]:
+        """Every provider a token may be claimed from: the built-in ones plus this config's."""
+        return merged_providers(entry.as_provider_entry() for entry in self.custom_providers)
+
+
+def _check_provider_keys(entries: tuple[ProviderEntry, ...], keys: Iterable[str]) -> None:
+    """Fail on a key no provider defines, or on one named twice."""
+    seen: set[str] = set()
+    for key in keys:
+        _ = find_provider(entries, key)  # raises on a key no entry defines
+        if key in seen:
+            msg = f"provider key {key!r} appears more than once in providers"
+            raise ConfigCheckError(msg)
+        seen.add(key)
+
+
+def _check_provider_prefixes(providers: tuple[Provider, ...]) -> None:
+    """Keep the prefix set unambiguous, so an inbound account id has one owner."""
+    blank = [provider.key for provider in providers if not provider.prefix]
+    if len(blank) > 1:
+        named = ", ".join(repr(key) for key in blank)
+        msg = f"at most one provider may have a blank prefix; {named} all do"
+        raise ConfigCheckError(msg)
+    named_prefixes = [provider for provider in providers if provider.prefix]
+    for one, other in permutations(named_prefixes, 2):
+        if other.prefix.startswith(one.prefix):
+            msg = (
+                f"provider {one.key!r}'s prefix is a prefix of provider {other.key!r}'s, "
+                "so an account id would not say which of them it came from"
+            )
+            raise ConfigCheckError(msg)
+
+
+def _resolve(model: _ConfigModel) -> Config:
+    """Turn the file as written into the Config the rest of the code uses."""
+    entries = merged_providers(entry.as_provider_entry() for entry in model.custom_providers)
+    # Before any Provider exists: a bad key derives a bad prefix, and Provider
+    # would then report the key's fault against the prefix.
+    _check_provider_keys(entries, (entry.key for entry in model.providers))
+    return Config(
+        bind_host=model.bind_host,
+        bind_port=model.bind_port,
+        providers=tuple(
+            Provider(
+                key=entry.key, prefix=f"{entry.key}:" if entry.prefix is None else entry.prefix
+            )
+            for entry in model.providers
+        ),
+        custom_providers=tuple(model.custom_providers),
+        base_url=model.base_url,
+    )
+
+
+def config_from_mapping(data: Mapping[str, object]) -> Config:
+    """Validate and resolve an untyped mapping, as `load_config` does with a parsed file."""
+    return _resolve(_ConfigModel.model_validate(data))
 
 
 CONFIG_FILENAME = "config.toml"
@@ -226,11 +283,16 @@ def load_config(path: Path) -> Config:
         raise ConfigError(msg) from exc
 
     try:
-        return Config.model_validate(data)
+        return config_from_mapping(data)
     except ValidationError as exc:
         # The same rendering the state files use, for the same reason: a
         # provider root can carry userinfo, and pydantic's own rendering would
         # quote it back. Nothing here is exempt because this file no longer
         # holds credentials -- a root in it still does.
-        msg = f"invalid config in {path}:\n{describe_validation_failure(Config, exc)}"
+        msg = f"invalid config in {path}:\n{describe_validation_failure(_ConfigModel, exc)}"
+        raise ConfigError(msg) from None
+    except (ConfigCheckError, ProviderRegistryError) as exc:
+        # Named rather than ValueError, so an unexpected one stays a traceback
+        # instead of being reported as the operator's config being wrong.
+        msg = f"invalid config in {path}: {exc}"
         raise ConfigError(msg) from None

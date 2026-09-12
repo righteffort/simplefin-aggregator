@@ -2,21 +2,22 @@
 """Manual, human-run end-to-end check against the real SimpleFIN demo bridge.
 
 Not part of the automated test suite, which never makes a real network call.
-This one does: it writes a throwaway config, claims a demo setup token, issues
-itself a setup token, starts the real server, claims that token the way a
-client app would, and uses the credentials it gets back.
+This one does: it fetches a fresh demo setup token, writes a throwaway config,
+claims that token, issues itself a setup token, starts the real server, claims
+that token the way a client app would, and uses the credentials it gets back.
 
-Get a fresh demo setup token from
+Run it with no arguments to fetch a fresh demo setup token from
 https://beta-bridge.simplefin.org/info/developers -- that page mints a new one
-on every load -- then run:
+on every load -- or pass one already in hand:
 
-    uv run scripts/manual_verify.py <demo-setup-token>
+    uv run scripts/manual_verify.py [<demo-setup-token>]
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -50,6 +51,11 @@ BASE_URL = f"http://127.0.0.1:{PORT}"
 # already covers the demo claim URL and no [[custom_providers]] entry is needed.
 PROVIDER_KEY = "simplefin-bridge"
 APP_KEY = "manual-verify"
+
+DEVELOPERS_PAGE = "https://beta-bridge.simplefin.org/info/developers"
+# The page embeds the token in a snippet of markup around it; a bare run of
+# alphanumeric characters this long is the token and nothing else on the page.
+_TOKEN_PATTERN = re.compile(r"[0-9A-Za-z]{80,}")
 
 CONFIG = f"""
 bind_host = "127.0.0.1"
@@ -104,6 +110,21 @@ def request(
         return error.code, error.read().decode()
 
 
+def fetch_demo_token() -> str:
+    """Fetch a fresh demo setup token from the SimpleFIN developers page."""
+    # The site 403s Python's default User-Agent string; any browser-shaped one works.
+    fetch_request = urllib.request.Request(  # a fixed https URL
+        DEVELOPERS_PAGE, headers={"User-Agent": "curl/8.0"}
+    )
+    with cast("HTTPResponse", urllib.request.urlopen(fetch_request)) as response:  # noqa: S310
+        page = response.read().decode()
+    found = _TOKEN_PATTERN.search(page)
+    if found is None:
+        message = f"Unable to find demo setup token on {DEVELOPERS_PAGE}"
+        raise RuntimeError(message)
+    return found.group()
+
+
 def expect(result: tuple[int, str], want: HTTPStatus, what: str) -> str:
     """Check one status and report it, returning the body.
 
@@ -146,7 +167,10 @@ def serving(config_dir: Path) -> Generator[None]:
         _ = server.wait()
 
 
-def main(demo_setup_token: str) -> None:
+def main(demo_setup_token: str | None) -> None:
+    if demo_setup_token is None:
+        print(f"==> Fetching a fresh demo setup token from {DEVELOPERS_PAGE}")
+        demo_setup_token = fetch_demo_token()
     # Removed on every path: it ends up holding a live provider access URL,
     # with the credentials for the user's bank data embedded in it.
     with tempfile.TemporaryDirectory() as name:
@@ -221,8 +245,11 @@ if __name__ == "__main__":
     # handle a SimpleFIN demo token, which grants access to demo data rather
     # than a real account, so the exposure is a paste of throwaway data, not
     # a credential.
-    if len(sys.argv) != 2:  # noqa: PLR2004
-        print(f"usage: {sys.argv[0]} <demo-setup-token>", file=sys.stderr)
-        print("  get one from https://beta-bridge.simplefin.org/info/developers", file=sys.stderr)
+    if len(sys.argv) > 2:  # noqa: PLR2004
+        print(f"usage: {sys.argv[0]} [<demo-setup-token>]", file=sys.stderr)
+        print(
+            f"  with no arguments, fetches a demo setup token from {DEVELOPERS_PAGE}",
+            file=sys.stderr,
+        )
         sys.exit(1)
-    main(sys.argv[1])
+    main(sys.argv[1] if len(sys.argv) == 2 else None)  # noqa: PLR2004

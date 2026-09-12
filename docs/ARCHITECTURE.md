@@ -37,7 +37,7 @@ codebase than the proxying does.
 | File | Responsibility |
 |---|---|
 | `cli.py` | Typer entry points: `claim`, `serve`, and the `app` group (`new`, `list`, `revoke`, `regen`), each taking `--config-dir`. Wires everything else together. `main()` is the `console_scripts` target. |
-| `config.py` | Pydantic models (`Config`, `Provider`, `CustomProvider`), `load_config()`, and where the config directory lives. All config validation lives here, the prefix rules included. Holds no credentials. |
+| `config.py` | The config file's two shapes (private `_ConfigModel`/`_ProviderFileEntry`, public `Config`/`Provider`), `CustomProvider`, `load_config()`, and where the config directory lives. All config validation lives here, the prefix rules included. Holds no credentials. |
 | `state_file.py` | Everything this application does with a file it owns: the permission warning, the redacted validation-error rendering, the atomic 0600 write, the sidecar `flock`, and the locked read-modify-write. Imports nothing else in the package — `config.py` takes its warning and its error rendering from here, not the other way around. |
 | `app_tokens.py` | The app token store: the two-state record, the digest helpers, and the constructors that mint a setup token and spend one for credentials. |
 | `provider_registry.py` | `ProviderEntry` and `KNOWN_PROVIDERS`: the fixed set of providers a setup token may be claimed from, plus `merged_providers`/`find_provider`. Must not import `config.py` — config imports it. |
@@ -114,24 +114,20 @@ is what this application could have written.
 ### `Config` (`config.py`)
 
 ```text
-Config
-  bind_host: str = "127.0.0.1"
-  bind_port: int = 8080
-  providers: list[Provider]           # Field(min_length=1) -- one or more, keys distinct
-  custom_providers: list[CustomProvider] = []
-  base_url: str                       # validated: ASCII, http/https, has a host, no user-info,
-                                      #   http only for a literal loopback IP
-  .provider_entries() -> tuple[ProviderEntry, ...]   # KNOWN_PROVIDERS + custom_providers
-
-Provider
-  key: str                            # a provider key; resolves against provider_entries()
-  prefix: str                         # defaults to f"{key}:"; [A-Za-z0-9._:-]* if given
-
-CustomProvider
-  key: str
-  label: str
-  root: str                           # validated via parse_root()
+_ConfigModel / _ProviderFileEntry   private -- the config file as written
+      |   _resolve()                defaults what the file omitted, then checks
+      v                             the providers as a set
+Config / Provider                   public -- frozen, every field present
 ```
+
+To see the precise fields, consult `config.py`.
+
+The shapes differ in one field. `_ProviderFileEntry.prefix` is `str | None`,
+where `None` means the file said nothing and `""` means the operator asked for
+the blank catch-all; `Provider.prefix` is a plain `str`. The reason for the
+split is that Pydantic's representation of the config file as written must
+support fields such as `prefix` to be `None`, while the public type must never
+allow that.
 
 `base_url` must be ASCII because a URL is: an internationalized host appears in
 one as punycode, not as the characters it is spelled with. The provider path
@@ -148,8 +144,8 @@ A `Provider` is a reference plus a namespace: no `name`, and no `access_url`
 key, the `provider_clients` dict's key, and what appears in log lines — and
 `prefix` is what the client app sees, per "Account id namespacing".
 
-Three model-level checks run at load time rather than at first use, so every
-command reports them and not just the one that would trip over them:
+Three checks run at load time rather than at first use, so every command
+reports them and not just the one that would trip over them:
 
 - Every `provider.key` is resolved against `provider_entries()`, so a dangling
   reference fails for *every* command rather than at first dereference — and a
@@ -170,8 +166,10 @@ application does not write is not repeated to be sure. The same posture as a
 **A `Config` is read-only once `load_config` returns**, and there is no config
 hot-reload — nothing mutates one, nothing reloads one, and `serve` reads
 `config.toml` and `provider_creds.json` exactly once at startup. That is what
-lets validators here establish invariants good for the object's whole lifetime;
-a reload would cost that.
+lets the checks in `Config.__post_init__` establish invariants good for the
+object's whole lifetime; a reload would cost that. `CustomProvider` is frozen
+for the same reason: `provider_entries()` reads those, so a mutable one would
+let a checked invariant stop being true of the object it was checked on.
 
 **`aggregator_creds.json` is live state: read afresh on every request that
 authenticates, and written on every claim.** That is the whole of what makes
@@ -179,12 +177,19 @@ authenticates, and written on every claim.** That is the whole of what makes
 or a reload signal to it.
 
 **`load_config(path) -> Config`** reads TOML, warns if the file is
-group/other-accessible, and validates via `Config.model_validate(dict)`. Its
-error path never `str()`s the `ValidationError`, and renders it through
-`state_file.py`'s `describe_validation_failure` — the same rendering the state
+group/other-accessible, and validates and resolves via `config_from_mapping`. Its
+error path has two branches. A `ValidationError` is never `str()`d; it goes
+through `state_file.py`'s `describe_validation_failure` — the same rendering the state
 files get, for the same reason: a `custom_providers` root can carry userinfo.
 See "Cross-cutting: secrets and logging". Don't bypass it by catching and
-re-stringifying the raw `ValidationError` elsewhere.
+re-stringifying the raw `ValidationError` elsewhere. The second branch catches
+`ConfigCheckError` and `ProviderRegistryError` — the checks that span
+providers, which run after validation and so cannot go through that rendering
+— and interpolates their message directly. That is safe because both build
+their text out of provider keys alone, which `ProviderEntry.__post_init__` has
+already constrained to `[a-z0-9-]+`. The catch names those two types rather
+than `ValueError` so an unexpected one stays a traceback instead of being
+reported to the operator as their config being wrong.
 
 ### `CustomProvider` (`config.py`)
 
@@ -686,7 +691,9 @@ before touching anything credential-adjacent:
    256-bit random values, not chosen passwords, and there is no dictionary to
    search.
 3. **The `ValidationError` path** in `state_file.py`, which `load_config` and
-   both stores share — never `str()` a `ValidationError` directly; pydantic's
+   both stores share -- and, beside it in `load_config` only, the
+   `ConfigCheckError`/`ProviderRegistryError` branch, whose messages are built
+   from provider keys alone and so carry nothing out of the file — never `str()` a `ValidationError` directly; pydantic's
    default rendering embeds the raw rejected input. The rendering is a
    *safelist*: it reads pydantic's message only for `value_error` and
    `assertion_error`, whose text this project wrote, and otherwise reads the

@@ -52,6 +52,10 @@ warning category does not license the next one.
   about the domain — "the scheme's default port names the same origin as no
   port at all", not "httpx2 drops it". A dependency's quirk belongs in a
   comment at the call site that relies on it.
+- **A test docstring says succinctly what the test pins, not why the code is
+  right.** The code's rationale belongs on the code — a reader debugging a
+  failure wants the requirement, and a reader asking why the code is that way is
+  not in the test file.
 - **Say which tests pin a requirement and which pin current behavior** — an
   input the code declines to normalize, a gap left open on purpose — so a
   later change knows whether altering one is allowed or a regression.
@@ -83,13 +87,22 @@ falsify one without going anywhere near the sentence that makes it.
 
 ## Comments and commit messages
 
-- **Comments say why, not what**, and only where the reason is non-obvious. A
-  comment restating the code is noise. Heavy comment density reads as
-  intricacies standing in for principles; if a module needs that much
-  narration, say what it is for in its docstring instead.
+- **Comments say why, not what**, and only where the reason is non-obvious —
+  the default for any given line is no comment at all. A comment restating the
+  code is noise. Heavy comment density reads as intricacies standing in for
+  principles; if a module needs that much narration, say what it is for in its
+  docstring instead. These rules govern docstrings too, test docstrings
+  included.
 - **Size a comment to the code it explains, and open by naming its subject.**
   Long rationale is welcome where a reader would otherwise re-litigate a
   decision; a two-line helper does not need a five-paragraph justification.
+- **Do not comment a line because you just changed it.** The effort of
+  deciding leaves a residue, and writing the residue down feels like finishing
+  the job. It is not: effort spent deciding is not evidence the reader needs
+  the decision. The checkable form — *would this comment be worth adding if
+  you had not just written the code?* If it would read as clutter on code you
+  were merely passing through, it is clutter now. The symptom is a diff whose
+  comment density is higher than the file it lands in.
 - **Write for a reader who has only the file, not its history.** They cannot
   see what the code was, what else was considered, or what a reviewer said, so
   a comment leaning on any of it explains nothing to them. Tense is the

@@ -266,14 +266,21 @@ real network call.
 
 `scripts/manual_verify.py` is a separate, human-run smoke test against the
 **real** SimpleFIN demo bridge (not part of `pytest`, and not run in CI). It
-claims a demo setup token, issues itself a setup token, starts the real
-server, claims that token the way a client app would, and uses the credentials
-it gets back to query `/simplefin/info` and `/simplefin/accounts` end to end.
+fetches a demo setup token, claims it, issues itself a setup token, starts the
+real server, claims that token the way a client app would, and uses the
+credentials it gets back to query `/simplefin/info` and `/simplefin/accounts`
+end to end.
 
-Get a fresh demo setup token from
+```sh
+uv run scripts/manual_verify.py
+```
+
+With no argument it fetches a fresh demo setup token from
 [the SimpleFIN developer guide](https://beta-bridge.simplefin.org/info/developers)
-— that page mints a new one on every load, so don't reuse an old one from
-memory or from these docs — then run:
+itself — that page mints a new one on every load, so don't reuse an old one
+from memory or from these docs.
+
+To pass a demo setup token manually:
 
 ```sh
 uv run scripts/manual_verify.py <demo-setup-token>
