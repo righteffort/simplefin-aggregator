@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# `version` is omitted intentionally: a provider that honoured a forwarded one
+# `version` is omitted intentionally: a provider that honored a forwarded one
 # could answer in a protocol this application does not handle.
 ACCOUNTS_FORWARDED_PARAMS = frozenset(
     {"start-date", "end-date", "pending", "account", "balances-only"}

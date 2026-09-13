@@ -52,6 +52,11 @@ def install_provider_transport(app: FastAPI, key: str, handler: MockHandler) -> 
     instead, the way `_loopback_provider` does.
     """
     state = cast(_AppState, app.state.app_state)
+    if key not in state.provider_clients:
+        # A mock under a key the app never reads leaves the real client in
+        # place, free to make the outbound request the mock was meant to stop.
+        msg = f"no provider client under {key!r}; the app has {sorted(state.provider_clients)}"
+        raise ValueError(msg)
     state.provider_clients[key] = httpx2.AsyncClient(
         transport=httpx2.MockTransport(handler),
         base_url=f"https://{key}.example.com/simplefin",

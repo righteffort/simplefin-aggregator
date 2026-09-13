@@ -537,6 +537,21 @@ def test_probe_client_does_not_follow_redirects() -> None:
         assert probe_client.follow_redirects is False
 
 
+def test_claim_client_bounds_every_wait() -> None:
+    """Requirement: no phase of the claim POST can wait forever."""
+    with cli._build_claim_client() as claim_client:  # pyright: ignore[reportPrivateUsage]
+        timeout = claim_client.timeout
+    assert None not in (timeout.connect, timeout.read, timeout.write, timeout.pool)
+
+
+def test_probe_client_bounds_every_wait() -> None:
+    """Requirement: no phase of the probe can wait forever."""
+    access_url = parse_url(ACCESS_URL)
+    with cli._build_probe_client(access_url) as probe_client:  # pyright: ignore[reportPrivateUsage]
+        timeout = probe_client.timeout
+    assert None not in (timeout.connect, timeout.read, timeout.write, timeout.pool)
+
+
 def test_naming_the_provider_skips_the_menu(tmp_path: Path, claim_succeeds: list[str]) -> None:
     """`--provider` is as deliberate an answer as choosing from the menu."""
     result = _run_claim_with_provider(tmp_path, PROVIDER_KEY)

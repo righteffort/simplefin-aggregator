@@ -72,3 +72,16 @@ def test_build_provider_client_does_not_follow_redirects() -> None:
     client = build_provider_client(access_url)
 
     assert client.follow_redirects is False
+
+
+def test_build_provider_client_bounds_every_wait() -> None:
+    """Requirement: no phase of a provider request can wait forever."""
+    access_url = validate_access_url(
+        parse_root("https://provider.example.com/simplefin"),
+        "https://user:pass@provider.example.com/simplefin",
+        provider="my-bank",
+    )
+
+    timeout = build_provider_client(access_url).timeout
+
+    assert None not in (timeout.connect, timeout.read, timeout.write, timeout.pool)

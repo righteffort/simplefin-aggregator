@@ -10,12 +10,10 @@ import httpx2
 if TYPE_CHECKING:
     from .url_validation import NormalizedUrl
 
-DEFAULT_TIMEOUT = httpx2.Timeout(30.0)
+_TIMEOUT = httpx2.Timeout(30.0)
 
 
-def build_provider_client(
-    access_url: NormalizedUrl, *, timeout: httpx2.Timeout = DEFAULT_TIMEOUT
-) -> httpx2.AsyncClient:
+def build_provider_client(access_url: NormalizedUrl) -> httpx2.AsyncClient:
     """One AsyncClient per provider. Credentials go via `auth=`, not the URL."""
     return httpx2.AsyncClient(
         # One of two places `origin_and_path` feeds a network request (the
@@ -27,6 +25,6 @@ def build_provider_client(
         # credentials it deliberately omits are supplied below.
         base_url=access_url.origin_and_path,
         auth=(access_url.username, access_url.password),
-        timeout=timeout,
+        timeout=_TIMEOUT,
         follow_redirects=False,
     )

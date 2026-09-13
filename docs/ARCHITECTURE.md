@@ -72,7 +72,7 @@ anything that can read this file can read that data.
 
 `aggregator_creds.json` has no confidentiality concern at all, by
 construction. Every value in it is a SHA-256 digest of a 256-bit random
-secret, kept to recognise that secret and never to reproduce it, so reading
+secret, kept to recognize that secret and never to reproduce it, so reading
 the file yields nothing an attacker can present to anything. That is what
 makes "never display or log a credential" a property of the design rather
 than a rule to follow. The file is disposable too: losing it costs one fresh
@@ -219,7 +219,7 @@ than at the comparison or the subtraction it would later break.
 
 `new_app_token` and `claim_app_token` are the only ways to build a record.
 They mint the secret and return it once alongside the record that will
-recognise it, which keeps the timestamp and the digesting out of `cli.py` and
+recognize it, which keeps the timestamp and the digesting out of `cli.py` and
 the claim route — the two places where assembling a record by hand would put
 a plaintext credential on disk.
 
@@ -536,7 +536,7 @@ app.claim(token)
 
 **Persist, then respond.** Crashing after the write costs a setup token the
 operator replaces with `app regen`; crashing after the response leaves the
-client app holding credentials this server does not recognise. The
+client app holding credentials this server does not recognize. The
 write-then-rename and its `fsync` are what make "persisted" mean survived a
 power cut, not merely reached the page cache — which is why the write stays in
 the request path.
@@ -791,7 +791,8 @@ sent.
   `make_unclaimed_app` put a record in the store and hand back the one thing
   the store does not keep — the credentials, or the setup token secret;
   `install_provider_transport` swaps in a `MockTransport`-backed client, with
-  an ordering constraint its docstring explains. The fixture provider is a
+  an ordering constraint its docstring explains, and refuses a key the app
+  built no client for. The fixture provider is a
   `custom_providers` entry, so most tests exercise the config-supplied path
   rather than a built-in root.
 - Tests are labelled to say whether they pin a *requirement* or *current

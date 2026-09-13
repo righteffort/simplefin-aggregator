@@ -42,9 +42,14 @@ if TYPE_CHECKING:
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 
 
+# Longer than the probe's: a read timeout comes after the POST has gone out,
+# when the provider may have spent the token on a reply that never arrives.
+_CLAIM_TIMEOUT = httpx2.Timeout(30.0)
+
+
 def _build_claim_client() -> httpx2.Client:
     """Overridden in tests to inject an httpx2.MockTransport."""
-    return httpx2.Client(follow_redirects=False)
+    return httpx2.Client(timeout=_CLAIM_TIMEOUT, follow_redirects=False)
 
 
 def _stdin_is_a_terminal() -> bool:
@@ -178,6 +183,7 @@ def _build_probe_client(access_url: NormalizedUrl) -> httpx2.Client:
     return httpx2.Client(
         base_url=access_url.origin_and_path,
         auth=(access_url.username, access_url.password),
+        timeout=_PROBE_TIMEOUT,
         follow_redirects=False,
     )
 
@@ -194,9 +200,7 @@ def _probe_access_url(access_url: NormalizedUrl) -> str | None:
     typer.echo("Checking that the credentials work...", err=True)
     try:
         with _build_probe_client(access_url) as probe_client:
-            response = probe_client.get(
-                "/accounts", params={"balances-only": "1"}, timeout=_PROBE_TIMEOUT
-            )
+            response = probe_client.get("/accounts", params={"balances-only": "1"})
     except httpx2.HTTPError as exc:
         # Not str(exc): see _claim_access_url -- the same provider-chosen
         # bytes, including a possibly-echoed Authorization header, can end up
