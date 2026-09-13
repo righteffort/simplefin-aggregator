@@ -75,7 +75,11 @@ class ProviderSpec(NamedTuple):
     access_url: str = PROVIDER_ACCESS_URL
 
 
-def make_config(*providers: ProviderSpec, base_url: str = "http://127.0.0.1:8080") -> Config:
+def make_config(
+    *providers: ProviderSpec,
+    base_url: str = "http://127.0.0.1:8080",
+    allow_multiple_blank_prefixes: bool = False,
+) -> Config:
     """Build a Config the same way load_config does: from an untyped dict.
 
     Given no providers, the one shared fixture provider.
@@ -93,6 +97,7 @@ def make_config(*providers: ProviderSpec, base_url: str = "http://127.0.0.1:8080
             "custom_providers": [
                 {"key": spec.key, "label": "Test Provider", "root": spec.root} for spec in specs
             ],
+            "allow_multiple_blank_prefixes": allow_multiple_blank_prefixes,
         }
     )
 

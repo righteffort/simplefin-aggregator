@@ -31,7 +31,7 @@ codebase than the proxying does.
 
 | File | Responsibility |
 |---|---|
-| `cli.py` | Typer entry points: `claim`, `serve`, and the `app` group (`new`, `list`, `revoke`, `regen`), each taking `--config-dir`. Wires everything else together. `main()` is the `console_scripts` target. |
+| `cli.py` | The Typer command-line entry points. Wires everything else together. `main()` is the `console_scripts` target. |
 | `config.py` | The config file's two shapes (private `_ConfigModel`/`_ProviderFileEntry`, public `Config`/`Provider`), `CustomProvider`, `load_config()`, and where the config directory lives. All config validation lives here, the prefix rules included. Holds no credentials. |
 | `state_file.py` | Everything this application does with a file it owns: the permission warning, the redacted validation-error rendering, the atomic 0600 write, the sidecar `flock`, and the locked read-modify-write. Imports nothing else in the package — `config.py` takes its warning and its error rendering from here, not the other way around. |
 | `app_tokens.py` | The app token store: the two-state record, the digest helpers, and the constructors that mint a setup token and spend one for credentials. |
@@ -46,7 +46,7 @@ codebase than the proxying does.
 | `transport.py` | `fetch`/`fetch_all`: the concurrent, non-raising provider-request layer. |
 | `provider_response.py` | `ProviderSuccess` / `ProviderFailure` / `ProviderResponse` — the uniform result type `fetch` always returns. |
 | `merge.py` | `merge(results) -> MergedResponse`: several providers' responses concatenated into one v1 body, each account id behind its provider's prefix. |
-| `provider_resolution.py` | `resolve_provider_for_account`: which provider owns an exposed account id, and what that id is to the provider itself. |
+| `provider_resolution.py` | `resolve_providers_for_account`: which providers an exposed account id may belong to, and what that id is to each of them. |
 | `request_counter.py` | `RequestCounter`: per-provider daily request counts, logged for observability only, never used as a control. |
 | `access_log.py` | Generic uvicorn-access-log redaction utility. Knows nothing about SimpleFIN or claim tokens — `app.py`/`cli.py` supply what to redact. |
 
@@ -60,7 +60,7 @@ Three files, plus a lock sidecar per store, all in the directory
 
 | File | Written by | Holds |
 |---|---|---|
-| `config.toml` | the user, by hand | bind address, `base_url`, provider keys and prefixes, `custom_providers` |
+| `config.toml` | the user, by hand | the settings `_ConfigModel` in `config.py` declares |
 | `provider_creds.json` | `claim` | provider key → provider access URL |
 | `aggregator_creds.json` | `app new`/`revoke`/`regen`, and the claim route | app key → an unclaimed or claimed app token record, digests only |
 
@@ -345,8 +345,9 @@ one of their accounts.
 Routing inverts the prefixing, so the set has to be unambiguous. `Config`
 validation keeps non-blank prefixes prefix-free — stricter than distinctness,
 since `bank` and `bank2` are distinct and still ambiguous — and allows at most
-one blank prefix. `resolve_provider_for_account` is then a longest-prefix
-match.
+one blank prefix unless `allow_multiple_blank_prefixes` is set (see below).
+`resolve_providers_for_account` is then a longest-prefix match, returning every
+provider tied for the longest.
 
 **The blank prefix is a knowingly leaky choice, and the leak is accepted
 rather than defended against.** If the blank provider returns an id of its own
@@ -354,10 +355,26 @@ beginning with another provider's prefix, that id routes to the wrong provider
 — which answers with nothing, having no such account — and it can collide
 outright with a real id from that provider. A prefix carrying a delimiter the
 providers' own ids do not contain avoids both, which is what the default has.
-A collision is detected in `merge`, which keeps both accounts and logs one line
-per colliding id naming the providers it came from: dropping one would lose the
+A collision is detected in `merge`, which keeps every colliding account, in
+configured provider order, and logs one line per colliding id naming the
+providers it came from: dropping one would lose the
 user's data to hide a configuration the operator chose, and a client app can do
 nothing with the news while the operator can change a prefix.
+
+**`allow_multiple_blank_prefixes = true` lifts the one-blank-prefix limit and
+nothing else.** It is for a client app that already holds raw account ids from several
+providers it used to sync with directly, where any prefix on any of them would
+re-identify those accounts. An id no named prefix claims then belongs to every
+blank-prefix provider, and the longest-prefix match returns all of them, so each
+is asked about it and the ones that did not issue it answer about no
+account. The costs are:
+
+- those providers hear one another's ids — the one exception to "No provider
+  hears another's account ids" under "`GET /simplefin/accounts`".
+- their ids can collide, which is handled identically to the collisions
+  described above.
+- the response to the client app may include spurious errors from providers for
+  the ids they do not recognize.
 
 ## Provider URL validation
 
@@ -544,8 +561,8 @@ app.accounts(request)
          version
   -> _route_requests(config, params) -> [(provider, that provider's params)]
        - no "account" values: every provider, none given an "account" param
-       - otherwise: resolve_provider_for_account() per id -> owning provider and
-         provider-local id; one request per owning provider, in configured
+       - otherwise: resolve_providers_for_account() per id -> owning providers
+         and provider-local id; one request per owning provider, in configured
          order, carrying its own ids and the shared params
        - an id no prefix claims: logged, routed nowhere, absent from the response
   -> fetch_all(clients, requests, "/accounts", counter)
@@ -556,9 +573,10 @@ app.accounts(request)
   -> Response(body, 200, "application/json")
 ```
 
-**No provider hears another's account ids.** An `account` filter names ids in
-one provider's namespace, so each queried provider is given only the ids that
-resolved to it, alongside the parameters the request shares
+**No provider hears another's account ids**, except among providers sharing
+the blank prefix, per "Account id namespacing". An `account` filter names ids
+in one provider's namespace, so each queried provider is given only the ids
+that resolved to it, alongside the parameters the request shares
 (`start-date`, `end-date`, `pending`, `balances-only`). Requests are built by
 iterating the configured providers rather than the requested ids, so two client
 apps asking for the same accounts in different orders are answered in the same

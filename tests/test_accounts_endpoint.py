@@ -60,6 +60,8 @@ def _aggregating(
     tmp_path: Path,
     specs: Sequence[ProviderSpec] = (BANK_A, BANK_B),
     accounts: Mapping[str, Sequence[Account]] | None = None,
+    *,
+    allow_multiple_blank_prefixes: bool = False,
 ) -> Generator[tuple[TestClient, tuple[str, str], dict[str, list[Params]]]]:
     """A client app, its credentials, and what each provider behind the aggregator was asked.
 
@@ -69,7 +71,8 @@ def _aggregating(
     """
     reported: Mapping[str, Sequence[Account]] = accounts if accounts is not None else {}
     auth = make_claimed_app(tmp_path)
-    app = make_app(tmp_path, make_config(*specs), make_access_urls(*specs))
+    config = make_config(*specs, allow_multiple_blank_prefixes=allow_multiple_blank_prefixes)
+    app = make_app(tmp_path, config, make_access_urls(*specs))
     calls: dict[str, list[Params]] = {spec.key: [] for spec in specs}
     with TestClient(app) as client:
         for spec in specs:
@@ -362,6 +365,36 @@ def test_a_blank_prefix_provider_may_collide_with_another_without_losing_an_acco
     # Not `"bank-b" in caplog.text`: the colliding id contains it, so that would pass
     # even if the warning named one owner.
     assert "from bank-a, bank-b" in caplog.text
+
+
+def test_with_several_blank_prefixes_each_id_reaches_every_provider_it_may_belong_to(
+    tmp_path: Path,
+) -> None:
+    """Requirement: an id no named prefix claims is asked of every blank-prefix provider.
+
+    A named id, alongside it, is asked only of the provider it names.
+    """
+    bank_c = ProviderSpec(
+        key="bank-c",
+        root="https://bank-c.example.com/simplefin",
+        prefix="",
+        access_url="https://user:pass@bank-c.example.com/simplefin",
+    )
+    with _aggregating(
+        tmp_path,
+        specs=(BANK_A._replace(prefix=""), BANK_B, bank_c),
+        accounts={"bank-b": [{"id": "b-1"}], "bank-c": [{"id": "c-1"}]},
+        allow_multiple_blank_prefixes=True,
+    ) as (client, auth, calls):
+        response = client.get("/simplefin/accounts?account=c-1&account=bank-b:b-1", auth=auth)
+
+    assert response.status_code == HTTPStatus.OK
+    assert calls == {
+        "bank-a": [[("account", "c-1")]],
+        "bank-b": [[("account", "b-1")]],
+        "bank-c": [[("account", "c-1")]],
+    }
+    assert response.json() == {"accounts": [{"id": "bank-b:b-1"}, {"id": "c-1"}], "errors": []}
 
 
 VERSIONS = ["1", "1.0", "2", "1.0.7", "", "one"]

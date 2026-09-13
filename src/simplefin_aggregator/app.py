@@ -25,7 +25,7 @@ from .auth import build_client_auth_dependency
 from .merge import merge
 from .provider_clients import build_provider_client
 from .provider_registry import find_provider
-from .provider_resolution import resolve_provider_for_account
+from .provider_resolution import resolve_providers_for_account
 from .request_counter import RequestCounter
 from .state_file import StateFileError
 from .transport import fetch_all
@@ -142,13 +142,12 @@ def _route_requests(
 
     owned: defaultdict[str, list[str]] = defaultdict(list)
     for account_id in account_ids:
-        resolved = resolve_provider_for_account(account_id, config.providers)
-        if resolved is None:
+        resolved = resolve_providers_for_account(account_id, config.providers)
+        if not resolved:
             # %r so that a newline in an id cannot forge a log line of its own.
             logger.warning("account id %r matches no configured provider prefix", account_id)
-            continue
-        provider, provider_account_id = resolved
-        owned[provider.key].append(provider_account_id)
+        for provider, provider_account_id in resolved:
+            owned[provider.key].append(provider_account_id)
     # Iterating in configured provider order so that the order of accounts in
     # the response is consistent, regardless of the order in the request.
     return [

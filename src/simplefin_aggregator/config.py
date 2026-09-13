@@ -134,6 +134,7 @@ class _ConfigModel(BaseModel):
     providers: list[_ProviderFileEntry] = Field(min_length=1)
     custom_providers: list[CustomProvider] = []
     base_url: str
+    allow_multiple_blank_prefixes: bool = False
 
     @field_validator("base_url")
     @classmethod
@@ -180,6 +181,7 @@ class Config:
     providers: tuple[Provider, ...]
     custom_providers: tuple[CustomProvider, ...]
     base_url: str
+    allow_multiple_blank_prefixes: bool
 
     def __post_init__(self) -> None:
         """Run the checks that span providers, so no Config exists that fails them.
@@ -188,7 +190,9 @@ class Config:
         the parsing path alone would be a rule to remember, not a property.
         """
         _check_provider_keys(self.provider_entries(), (p.key for p in self.providers))
-        _check_provider_prefixes(self.providers)
+        _check_provider_prefixes(
+            self.providers, allow_multiple_blank_prefixes=self.allow_multiple_blank_prefixes
+        )
 
     def provider_entries(self) -> tuple[ProviderEntry, ...]:
         """Every provider a token may be claimed from: the built-in ones plus this config's."""
@@ -206,12 +210,21 @@ def _check_provider_keys(entries: tuple[ProviderEntry, ...], keys: Iterable[str]
         seen.add(key)
 
 
-def _check_provider_prefixes(providers: tuple[Provider, ...]) -> None:
-    """Keep the prefix set unambiguous, so an inbound account id has one owner."""
+def _check_provider_prefixes(
+    providers: tuple[Provider, ...], *, allow_multiple_blank_prefixes: bool
+) -> None:
+    """Keep the prefix set unambiguous, so an inbound account id has one owner.
+
+    Several blank prefixes, where allowed, are the one exception: an id no
+    named prefix claims then belongs to all of them.
+    """
     blank = [provider.key for provider in providers if not provider.prefix]
-    if len(blank) > 1:
+    if len(blank) > 1 and not allow_multiple_blank_prefixes:
         named = ", ".join(repr(key) for key in blank)
-        msg = f"at most one provider may have a blank prefix; {named} all do"
+        msg = (
+            f"at most one provider may have a blank prefix unless "
+            f"allow_multiple_blank_prefixes = true; {named} all do"
+        )
         raise ConfigCheckError(msg)
     named_prefixes = [provider for provider in providers if provider.prefix]
     for one, other in permutations(named_prefixes, 2):
@@ -240,6 +253,7 @@ def _resolve(model: _ConfigModel) -> Config:
         ),
         custom_providers=tuple(model.custom_providers),
         base_url=model.base_url,
+        allow_multiple_blank_prefixes=model.allow_multiple_blank_prefixes,
     )
 
 

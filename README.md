@@ -109,6 +109,10 @@ prefix = ""                # see below
 key = "lunchflow"          # no prefix given, so "lunchflow:"
 ```
 
+No non-blank prefix may begin with another. For example, having the prefixes
+`bank` and `bank2` is disallowed.  This can be avoided by using `:` as the last
+character of every prefix, and nowhere else in any prefix.
+
 **A prefix is part of every account's identity, and is as permanent as the
 key.** Your client app remembers accounts by id. Change a provider's prefix
 later — or its key, while the prefix is the default — and to your client app
@@ -118,7 +122,30 @@ appears.
 **If your client app already uses a provider directly, set `prefix = ""` for
 that provider before pointing the app at this aggregator,** so that the account
 ids are unchanged when using the aggregator. Only one provider may have a blank
-prefix.
+prefix, unless you set `allow_multiple_blank_prefixes = true`.
+
+**If your client app already holds accounts from several providers, synced
+directly from each,** give each of them `prefix = ""` and set
+`allow_multiple_blank_prefixes = true` at the top of the config, before any
+`[[providers]]` entry. The account ids from all such providers are then
+unchanged. The setting relaxes no other rule about prefixes.
+
+With multiple blank-prefix providers, requests for account ids are sent to all
+of them. This has these consequences:
+
+- Each of those providers sees the ids of the others' accounts that your client
+  app asks about.
+- A provider sent an account id for another provider may include an error
+  message in its response, and the aggregator forwards that error, along with
+  the data, to your client app, which might not handle it cleanly. Empirically,
+  however, Actual Budget ignores the errors from beta-bridge.simplefin.org for
+  unknown accounts, and Lunch Flow does not generate such errors.
+- If more than one provider uses the same account id, all of those accounts are
+  sent to your client app under that id, in the order their providers appear
+  in the config. The client app is likely either to combine them or to drop
+  all but one. When this happens the server logs a warning naming the
+  providers. If you observe this, add a prefix to one of the providers with
+  colliding account ids.
 
 ### 2. Claim a SimpleFIN setup token
 
@@ -218,7 +245,7 @@ install a digest of a credential they chose.
 ## Endpoints
 
 These are typically used directly by a client app such as Actual Budget; as an
-end user you can ignore this sction.
+end user you can ignore this section.
 
   - `POST /simplefin/claim/{token}` — spends a setup token once, returning an
     access URL. `403` if the token was never issued or has already been

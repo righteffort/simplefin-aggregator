@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 from simplefin_aggregator import cli
 from simplefin_aggregator.provider_access_urls import load_access_urls, provider_creds_path
 from simplefin_aggregator.provider_registry import KNOWN_PROVIDERS
+from simplefin_aggregator.url_validation import parse_url
 
 from .support import echoing_provider
 
@@ -527,6 +528,13 @@ def test_claim_client_does_not_follow_redirects() -> None:
     # setting the CLI actually runs with.
     with cli._build_claim_client() as claim_client:  # pyright: ignore[reportPrivateUsage]
         assert claim_client.follow_redirects is False
+
+
+def test_probe_client_does_not_follow_redirects() -> None:
+    # Same reason as the claim client: the probe tests replace this factory.
+    access_url = parse_url(ACCESS_URL)
+    with cli._build_probe_client(access_url) as probe_client:  # pyright: ignore[reportPrivateUsage]
+        assert probe_client.follow_redirects is False
 
 
 def test_naming_the_provider_skips_the_menu(tmp_path: Path, claim_succeeds: list[str]) -> None:

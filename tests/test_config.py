@@ -169,7 +169,9 @@ def test_load_config_rejects_zero_providers(tmp_path: Path) -> None:
         _ = load_config(path)
 
 
-def _providers_toml(*entries: tuple[str, str | None]) -> str:
+def _providers_toml(
+    *entries: tuple[str, str | None], allow_multiple_blank_prefixes: bool = False
+) -> str:
     """A config naming several providers by key, each with an explicit prefix or none.
 
     Every key named gets a `custom_providers` entry, deduplicated, so that a
@@ -193,7 +195,8 @@ key = "{key}"
         + ("" if prefix is None else f'prefix = "{prefix}"\n')
         for key, prefix in entries
     )
-    return f'base_url = "http://127.0.0.1:8080"\n{customs}{providers}'
+    allow = "allow_multiple_blank_prefixes = true\n" if allow_multiple_blank_prefixes else ""
+    return f'base_url = "http://127.0.0.1:8080"\n{allow}{customs}{providers}'
 
 
 def test_a_providers_prefix_defaults_to_its_key_and_a_colon(tmp_path: Path) -> None:
@@ -244,7 +247,53 @@ def test_load_config_rejects_two_blank_prefixes(tmp_path: Path) -> None:
     """Requirement: the blank prefix is the catch-all, and two catch-alls name no owner."""
     path = _write(tmp_path, _providers_toml(("bank-a", ""), ("bank-b", "")))
 
-    with pytest.raises(ConfigError, match="blank prefix"):
+    with pytest.raises(ConfigError, match="blank prefix") as exc_info:
+        _ = load_config(path)
+
+    assert "allow_multiple_blank_prefixes" in str(exc_info.value), "the way out is named"
+
+
+def test_two_blank_prefixes_are_accepted_when_allowed(tmp_path: Path) -> None:
+    """Requirement: an operator may give several providers the blank prefix by saying so."""
+    path = _write(
+        tmp_path,
+        _providers_toml(
+            ("bank-a", ""), ("bank-b", "b:"), ("bank-c", ""), allow_multiple_blank_prefixes=True
+        ),
+    )
+
+    config = load_config(path)
+
+    assert [provider.prefix for provider in config.providers] == ["", "b:", ""]
+
+
+@pytest.mark.parametrize(
+    ("entries", "message"),
+    [
+        pytest.param(
+            (("bank-a", ""), ("bank-b", ""), ("bank-c", "bank"), ("bank-d", "bank2")),
+            "is a prefix of",
+            id="one-named-prefix-a-prefix-of-another",
+        ),
+        pytest.param(
+            (("bank-a", ""), ("bank-b", ""), ("bank-c", "b c")),
+            "must match",
+            id="a-prefix-a-url-would-have-to-escape",
+        ),
+    ],
+)
+def test_allowing_several_blank_prefixes_relaxes_no_other_prefix_rule(
+    tmp_path: Path, entries: tuple[tuple[str, str], ...], message: str
+) -> None:
+    """Requirement: the permission covers the blank prefix alone.
+
+    Each case gives two providers the blank prefix, so it would be rejected
+    for that were the permission not in force.
+    """
+    path = _write(tmp_path, _providers_toml(*entries, allow_multiple_blank_prefixes=True))
+    assert [prefix for _, prefix in entries][:2] == ["", ""], "the premise: two blank prefixes"
+
+    with pytest.raises(ConfigError, match=message):
         _ = load_config(path)
 
 
@@ -351,6 +400,7 @@ def test_the_config_holds_no_credential_to_redact(tmp_path: Path) -> None:
         "providers",
         "custom_providers",
         "base_url",
+        "allow_multiple_blank_prefixes",
     }
 
 
@@ -365,6 +415,7 @@ def test_a_config_built_by_hand_is_checked_like_one_read_from_a_file() -> None:
             providers=ambiguous,
             custom_providers=(),
             base_url="https://example.com",
+            allow_multiple_blank_prefixes=False,
         )
 
 
