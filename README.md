@@ -337,3 +337,9 @@ uv run scripts/manual_verify.py
 ```
 
 Its docstring describes what it checks and how to pass tokens of your own.
+
+## AI disclosure
+
+The design, code, tests and documentation in this repository were written with
+Claude, working under human direction. A human steered the design, reviewed each
+change, and decided what landed; changes were also put reviewed by AI.
