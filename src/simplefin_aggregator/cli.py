@@ -122,7 +122,7 @@ def _decode_setup_token(setup_token: str) -> str:
     except ValueError as exc:
         # binascii.Error (bad padding, and with it bad length) subclasses
         # ValueError, as does a token with non-ASCII characters in it.
-        _fail(f"error: setup token is not valid base64: {exc}")
+        _fail(f"error: pasted setup token is not valid base64: {exc}")
 
     try:
         return claim_url_bytes.decode("ascii")
@@ -368,7 +368,7 @@ def _format_time(when: datetime) -> str:
 
 @app_commands.command("list")
 def app_list(config_dir: _ConfigDirOption = None) -> None:
-    """Show the client apps, with no credential among them to show."""
+    """Show the client apps."""
     try:
         apps = load_app_tokens(app_tokens_path(config_dir))
     except StateFileError as exc:
