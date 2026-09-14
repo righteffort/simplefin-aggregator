@@ -753,7 +753,9 @@ A sixth rule has no single home because it applies at every command boundary:
 **a value the user typed is not safe to echo just because they typed it.** A
 mistyped key is most often a pasted setup token, so `_check_key` rejects it
 without naming it, and `claim` declines to quote a setup token it could not
-decode. Repeating the value would put a secret on stderr in order to tell the
+decode. The parser's own usage errors would quote a stray token too, so
+`cli.app` is built on `_UsageErrorsWithoutInput`, which describes the command
+instead. Repeating the value would put a secret on stderr in order to tell the
 user something they already know.
 
 **Credentials reach a provider only through `auth=`, never through a URL.**

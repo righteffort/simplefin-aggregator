@@ -7,13 +7,17 @@ from __future__ import annotations
 import base64
 import sys
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Annotated, NoReturn, cast
+from typing import TYPE_CHECKING, Annotated, NoReturn, cast, override
 
 import httpx2
 import typer
 import uvicorn
 from pydantic import SecretStr
 from rich.markup import escape
+
+# A private module: typer bundles its own click and exports no usage error class.
+from typer._click.exceptions import MissingParameter, NoArgsIsHelpError, NoSuchOption, UsageError
+from typer.core import TyperGroup
 
 from .access_log import install_access_log_redaction
 from .app import CLAIM_PATH_PREFIX, ProviderAccessUrlError, create_app
@@ -46,13 +50,86 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from fastapi import FastAPI
+    from typer._click.core import Context
 
     from .provider_registry import ProviderEntry
     from .url_validation import NormalizedUrl
 
+
+def _without_input(exc: UsageError) -> UsageError:
+    """Replace a usage error that may quote what was typed with one that cannot.
+
+    The parser's own messages for an extra argument, an unknown command and an
+    unknown option quote the token they rejected, which is as likely as any
+    other typed value to be a pasted setup token. So this is a safelist, like
+    `state_file`'s rendering: an error passes through only if its text names
+    nothing typed, and any other is described from the command's definition.
+    """
+    if isinstance(exc, MissingParameter | NoArgsIsHelpError):
+        return exc
+    if exc.ctx is None:
+        return UsageError("the command line could not be parsed.")
+    return UsageError(_describe_usage(exc, exc.ctx), exc.ctx)
+
+
+def _describe_usage(exc: UsageError, ctx: Context) -> str:
+    """Say what the command accepts, from what it defines rather than what it was given.
+
+    A plain `UsageError` from a command that is not a group is read as an
+    extra argument. One raised from a command's own body would be misdescribed
+    the same way; no command here raises one.
+    """
+    path = ctx.command_path
+    params = ctx.command.get_params(ctx)
+    if isinstance(exc, NoSuchOption):
+        options = [
+            opt
+            for param in params
+            if param.param_type_name == "option" and param.name != "help"
+            for opt in param.opts
+        ]
+        if not options:
+            return f"{path} takes no options."
+        return f"{path} has no such option; it takes {', '.join(options)}."
+    if isinstance(ctx.command, TyperGroup):
+        return f"{path} expects one of these commands: {', '.join(ctx.command.list_commands(ctx))}."
+    if type(exc) is UsageError:
+        arguments = [
+            param.human_readable_name for param in params if param.param_type_name == "argument"
+        ]
+        if not arguments:
+            return f"{path} takes no arguments."
+        plural = "" if len(arguments) == 1 else "s"
+        return f"{path} takes {len(arguments)} argument{plural}: {', '.join(arguments)}."
+    return f"{path} was given an invalid command line."
+
+
+class _UsageErrorsWithoutInput(TyperGroup):
+    """The root command, so that every usage error beneath it goes through `_without_input`.
+
+    Parse errors from a subcommand surface inside the root's `invoke`, so no
+    other group or command needs this class.
+    """
+
+    @override
+    def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
+        try:
+            return super().parse_args(ctx, args)
+        except UsageError as exc:
+            raise _without_input(exc) from None
+
+    @override
+    def invoke(self, ctx: Context) -> object:
+        try:
+            return cast(object, super().invoke(ctx))
+        except UsageError as exc:
+            raise _without_input(exc) from None
+
+
 # Help text here is plain text: in Typer's "rich" mode a bracketed pattern such
 # as the key rule is read as a markup tag and silently dropped.
 app = typer.Typer(
+    cls=_UsageErrorsWithoutInput,
     add_completion=False,
     no_args_is_help=True,
     help=(
