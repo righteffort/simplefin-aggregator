@@ -119,7 +119,7 @@ def _run_claim(
     """Invoke `claim` through the provider menu, then feed it the token."""
     _ = _write_config(tmp_path, config)
     return runner.invoke(
-        cli.app, ["claim", "--config-dir", str(tmp_path)], input=f"{choice}\n{token}\n"
+        cli.app, ["--config-dir", str(tmp_path), "claim"], input=f"{choice}\n{token}\n"
     )
 
 
@@ -130,7 +130,7 @@ def _run_claim_with_provider(
     _ = _write_config(tmp_path, config)
     return runner.invoke(
         cli.app,
-        ["claim", "--provider", provider, "--config-dir", str(tmp_path)],
+        ["--config-dir", str(tmp_path), "claim", "--provider", provider],
         input=f"{token}\n",
     )
 
@@ -312,7 +312,7 @@ def test_claim_fails_on_an_unwritable_config_directory_before_spending_the_token
     # the writability check that has to catch this.
     config_dir.chmod(0o500)
 
-    result = runner.invoke(cli.app, ["claim", "--config-dir", str(config_dir)])
+    result = runner.invoke(cli.app, ["--config-dir", str(config_dir), "claim"])
 
     assert result.exit_code == 1
     assert claim_succeeds == []

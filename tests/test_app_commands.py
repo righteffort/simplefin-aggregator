@@ -46,7 +46,7 @@ def _write_config(tmp_path: Path) -> None:
 
 
 def _run(tmp_path: Path, *arguments: str) -> Result:
-    return runner.invoke(cli.app, ["app", *arguments, "--config-dir", str(tmp_path)])
+    return runner.invoke(cli.app, ["--config-dir", str(tmp_path), "app", *arguments])
 
 
 def _new(tmp_path: Path, key: str = "actual-budget", label: str = "Actual Budget") -> Result:

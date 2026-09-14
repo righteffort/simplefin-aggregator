@@ -89,7 +89,7 @@ def aggregator(*arguments: str, config_dir: Path, stdin: str = "") -> str:
     whole command line into its message.
     """
     completed = subprocess.run(  # noqa: S603  # no shell, and the program is fixed
-        [UV, "run", "simplefin-aggregator", *arguments, "--config-dir", str(config_dir)],
+        [UV, "run", "simplefin-aggregator", "--config-dir", str(config_dir), *arguments],
         input=stdin,
         check=False,
         capture_output=True,
@@ -159,7 +159,7 @@ def expect(result: tuple[int, str], want: HTTPStatus, what: str) -> str:
 def serving(config_dir: Path) -> Generator[None]:
     """Run the real server for the duration of the block."""
     server = subprocess.Popen(  # noqa: S603  # no shell, and the program is fixed
-        [UV, "run", "simplefin-aggregator", "serve", "--config-dir", str(config_dir)]
+        [UV, "run", "simplefin-aggregator", "--config-dir", str(config_dir), "serve"]
     )
     try:
         for _ in range(50):

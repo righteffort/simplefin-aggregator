@@ -69,7 +69,7 @@ def _claim(tmp_path: Path, access_url: str = ACCESS_URL) -> None:
 def _serve_args(tmp_path: Path) -> list[str]:
     # --config-dir is never omitted in tests: without it serve would read the
     # developer's own config and credentials.
-    return ["serve", "--config-dir", str(tmp_path)]
+    return ["--config-dir", str(tmp_path), "serve"]
 
 
 def _record_start(monkeypatch: pytest.MonkeyPatch, started: list[object]) -> None:

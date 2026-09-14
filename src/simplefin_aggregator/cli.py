@@ -60,9 +60,25 @@ def _stdin_is_a_terminal() -> bool:
 _ConfigDirOption = Annotated[
     Path | None,
     typer.Option(
-        "--config-dir", help=f"Configuration directory (default: {default_config_dir()})."
+        "--config-dir",
+        envvar="SIMPLEFIN_AGGREGATOR_CONFIG_DIR",
+        help=(
+            f"Configuration directory (default: {default_config_dir()}). "
+            "Also read from SIMPLEFIN_AGGREGATOR_CONFIG_DIR; the flag wins if both are given."
+        ),
     ),
 ]
+
+
+@app.callback()
+def main_callback(ctx: typer.Context, config_dir: _ConfigDirOption = None) -> None:
+    """simplefin-aggregator: a SimpleFIN Bridge server backed by other SimpleFIN providers."""
+    ctx.obj = config_dir
+
+
+def _config_dir(ctx: typer.Context) -> Path | None:
+    """Read back the `--config-dir` `main_callback` stashed on the context, typed."""
+    return cast("Path | None", ctx.obj)
 
 
 def _fail(*lines: str) -> NoReturn:
@@ -213,12 +229,13 @@ def _probe_access_url(access_url: NormalizedUrl) -> str | None:
 
 @app.command()
 def claim(
+    ctx: typer.Context,
     provider: Annotated[
         str | None, typer.Option("--provider", help="Provider key. Asked for if omitted.")
     ] = None,
-    config_dir: _ConfigDirOption = None,
 ) -> None:
     """Claim a one-time SimpleFIN setup token and store the access URL it returns."""
+    config_dir = _config_dir(ctx)
     loaded_config = _load_config_or_exit(config_dir)
     store_path = provider_creds_path(config_dir)
 
@@ -334,11 +351,12 @@ def _print_setup_token(base_url: str, claim_secret: str, key: str) -> None:
 
 @app_commands.command("new")
 def app_new(
+    ctx: typer.Context,
     key: _KeyOption,
     label: Annotated[str, typer.Option("--label", help="How `app list` should name it.")],
-    config_dir: _ConfigDirOption = None,
 ) -> None:
     """Issue a setup token for a client app that does not have one yet."""
+    config_dir = _config_dir(ctx)
     loaded_config = _load_config_or_exit(config_dir)
     _check_key(key)
     store_path = _writable_store_or_exit(config_dir)
@@ -367,8 +385,9 @@ def _format_time(when: datetime) -> str:
 
 
 @app_commands.command("list")
-def app_list(config_dir: _ConfigDirOption = None) -> None:
+def app_list(ctx: typer.Context) -> None:
     """Show the client apps."""
+    config_dir = _config_dir(ctx)
     try:
         apps = load_app_tokens(app_tokens_path(config_dir))
     except StateFileError as exc:
@@ -396,8 +415,9 @@ def app_list(config_dir: _ConfigDirOption = None) -> None:
 
 
 @app_commands.command("revoke")
-def app_revoke(key: _KeyOption, config_dir: _ConfigDirOption = None) -> None:
+def app_revoke(ctx: typer.Context, key: _KeyOption) -> None:
     """Forget a client app, so its credentials stop working and its token cannot be claimed."""
+    config_dir = _config_dir(ctx)
     _check_key(key)
     store_path = _writable_store_or_exit(config_dir)
 
@@ -413,8 +433,9 @@ def app_revoke(key: _KeyOption, config_dir: _ConfigDirOption = None) -> None:
 
 
 @app_commands.command("regen")
-def app_regen(key: _KeyOption, config_dir: _ConfigDirOption = None) -> None:
+def app_regen(ctx: typer.Context, key: _KeyOption) -> None:
     """Issue a client app a fresh setup token, revoking whatever it holds now."""
+    config_dir = _config_dir(ctx)
     loaded_config = _load_config_or_exit(config_dir)
     _check_key(key)
     store_path = _writable_store_or_exit(config_dir)
@@ -467,8 +488,9 @@ def _check_app_store_or_exit(config_dir: Path | None) -> None:
 
 
 @app.command()
-def serve(config_dir: _ConfigDirOption = None) -> None:
+def serve(ctx: typer.Context) -> None:
     """Read the config and run the server. Never claims anything."""
+    config_dir = _config_dir(ctx)
     loaded_config = _load_config_or_exit(config_dir)
     _check_app_store_or_exit(config_dir)
     fastapi_app = _build_app_or_exit(loaded_config, config_dir)

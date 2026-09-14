@@ -35,11 +35,13 @@ chmod 600 ~/.config/simplefin-aggregator/config.toml
 $EDITOR ~/.config/simplefin-aggregator/config.toml
 ```
 
-Pass `--config-dir /path/to/dir` to invocations of
-simplefin-aggregator if you did not use the default directory. The
-`config.toml` in this repository is a template to copy: edit the copy in your
-config directory, since the one here is a tracked file that `git` will happily
-revert or commit.
+Pass `--config-dir /path/to/dir` before the subcommand (e.g.
+`simplefin-aggregator --config-dir /path/to/dir serve`) if you did not use the
+default directory, or set the `SIMPLEFIN_AGGREGATOR_CONFIG_DIR` environment
+variable instead; the flag wins if both are given. The `config.toml` in this
+repository is a template to copy: edit the copy in your config directory,
+since the one here is a tracked file that `git` will happily revert or
+commit.
 
 `[[providers]]` names the providers to aggregate, by key:
 
@@ -198,7 +200,7 @@ run `app regen --key actual-budget` for a fresh one.
 ### 4. Run the server
 
 ```sh
-uv run simplefin-aggregator serve [--config-dir <dir>]
+uv run simplefin-aggregator [--config-dir <dir>] serve
 ```
 
 This starts serving on `bind_host:bind_port` (default `127.0.0.1:5026`). It
@@ -293,13 +295,14 @@ docker run --rm \
 owner-only permissions work the same as outside Docker.
 
 To claim a provider's token from inside the container instead of on the host,
-override the default aggregator command and specify `--config-dir /config`:
+override the default aggregator command; the image already sets
+`SIMPLEFIN_AGGREGATOR_CONFIG_DIR=/config`, so no `--config-dir` is needed:
 
 ```sh
 docker run --rm -it \
   -v "$HOME/.config/simplefin-aggregator:/config" \
   --user "$(id -u):$(id -g)" \
-  simplefin-aggregator claim --config-dir /config
+  simplefin-aggregator claim
 ```
 
 ## Limitations

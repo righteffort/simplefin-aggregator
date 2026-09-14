@@ -56,14 +56,14 @@ def test_a_full_flow_puts_no_credential_anywhere_a_person_would_see(
         issued = runner.invoke(
             cli.app,
             [
+                "--config-dir",
+                str(tmp_path),
                 "app",
                 "new",
                 "--key",
                 "actual-budget",
                 "--label",
                 "AB",
-                "--config-dir",
-                str(tmp_path),
             ],
         )
         setup_token = issued.stdout.strip()
@@ -84,7 +84,7 @@ def test_a_full_flow_puts_no_credential_anywhere_a_person_would_see(
             )
             accounts = client.get("/simplefin/accounts", auth=(username, password))
 
-        listed = runner.invoke(cli.app, ["app", "list", "--config-dir", str(tmp_path)])
+        listed = runner.invoke(cli.app, ["--config-dir", str(tmp_path), "app", "list"])
 
     assert claimed.status_code == HTTPStatus.OK
     assert accounts.status_code == HTTPStatus.OK

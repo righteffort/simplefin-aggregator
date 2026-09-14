@@ -54,8 +54,9 @@ codebase than the proxying does.
 
 ## On-disk state
 
-Three files, plus a lock sidecar per store, all in the directory
-`--config-dir` selects for every subcommand, defaulting to
+Three files, plus a lock sidecar per store, all in the directory the
+top-level `--config-dir` option selects (or `SIMPLEFIN_AGGREGATOR_CONFIG_DIR`
+if the flag is absent), defaulting to
 `platformdirs.user_config_dir("simplefin-aggregator")`:
 
 | File | Written by | Holds |
@@ -407,7 +408,7 @@ codebase:
 
 ## Request/command flows
 
-### `serve [--config-dir DIR]`
+### `[--config-dir DIR] serve`
 
 ```text
 cli.serve
@@ -440,7 +441,7 @@ directory it cannot write would lose every claim. An empty store is a warning
 rather than a failure: it is the legitimate state between installing the server
 and issuing the first app its token.
 
-### CLI `claim [--provider KEY] [--config-dir DIR]` (claiming from a *real* provider)
+### CLI `[--config-dir DIR] claim [--provider KEY]` (claiming from a *real* provider)
 
 ```text
 cli.claim
@@ -497,7 +498,7 @@ used elsewhere in this codebase.
 ### CLI `app new` / `regen` / `revoke` (obtaining/revoking *this aggregator's* tokens)
 
 ```text
-cli.app_new(key, label, config_dir)
+cli.app_new(ctx, key, label)
   -> _load_config_or_exit(...)                  # for base_url
   -> _check_key(key)                            # rejected keys are never named back
   -> _writable_store_or_exit(config_dir)        # directory writable, and warn if shared
