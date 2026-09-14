@@ -71,3 +71,19 @@ does not.
 - `make_config` versus `test_config.py`'s `_providers_toml`: two helpers
   building the same config is a smell, but merging them is a separate
   cleanup.
+
+## Decisions made while working
+
+- Item 1: the guard surfaced no test installing under a wrong key.
+- Item 2: run against httpx2 2.12.0, a client with no `timeout=` gets 5 s on
+  every phase -- finite. The claim client gets an explicit `_CLAIM_TIMEOUT`
+  of 30 s anyway: a read timeout lands after the POST went out, when the token
+  may be spent, so waiting longer than the library's 5 s is worth it. The
+  probe's timeout moves onto its client, which is smaller than testing the call
+  site. `build_provider_client`'s `timeout=` parameter had no caller passing
+  it, so it is removed: the factory test then covers what `app.py` runs.
+  The finiteness tests pass if an explicit timeout is deleted, since the
+  library default is also finite; that is intended, as finiteness is the
+  requirement.
+- Item 3: both fakes already have a positive test (deleting the claim fake's
+  recording fails 8 tests, the probe fake's fails 2). Nothing added.
