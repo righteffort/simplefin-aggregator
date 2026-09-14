@@ -9,6 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from simplefin_aggregator import app_tokens, cli
+from simplefin_aggregator.provider_registry import KEY_PATTERN
 
 from .support import make_unclaimed_app
 
@@ -106,3 +107,12 @@ def test_help_mentions_the_config_dir_environment_variable() -> None:
 
     assert result.exit_code == 0
     assert "SIMPLEFIN_AGGREGATOR_CONFIG_DIR" in result.output
+
+
+@pytest.mark.parametrize("args", [["app", "new", "--help"], ["claim", "--help"]])
+def test_key_option_help_states_the_pattern_keys_must_match(args: list[str]) -> None:
+    """A command that takes a key states the pattern it must match, in full."""
+    result = runner.invoke(cli.app, args)
+
+    assert result.exit_code == 0
+    assert KEY_PATTERN.pattern in result.output

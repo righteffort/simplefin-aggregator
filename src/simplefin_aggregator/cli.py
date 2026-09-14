@@ -39,7 +39,9 @@ if TYPE_CHECKING:
     from .provider_registry import ProviderEntry
     from .url_validation import NormalizedUrl
 
-app = typer.Typer(add_completion=False, no_args_is_help=True)
+# Help text here is plain text: in Typer's "rich" mode a bracketed pattern such
+# as the key rule is read as a markup tag and silently dropped.
+app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode=None)
 
 
 # Longer than the probe's: a read timeout comes after the POST has gone out,
@@ -223,6 +225,7 @@ def _probe_access_url(access_url: NormalizedUrl) -> str | None:
         # in httpx2's exception text.
         return f"could not reach {access_url.origin} ({type(exc).__name__})"
     if response.status_code == HTTPStatus.OK:
+        typer.echo("Credentials work.", err=True)
         return None
     return f"{access_url.origin} answered HTTP {response.status_code}"
 
@@ -231,7 +234,11 @@ def _probe_access_url(access_url: NormalizedUrl) -> str | None:
 def claim(
     ctx: typer.Context,
     provider: Annotated[
-        str | None, typer.Option("--provider", help="Provider key. Asked for if omitted.")
+        str | None,
+        typer.Option(
+            "--provider",
+            help=f"Provider key, matching {KEY_PATTERN.pattern}. Asked for if omitted.",
+        ),
     ] = None,
 ) -> None:
     """Claim a one-time SimpleFIN setup token and store the access URL it returns."""
@@ -309,11 +316,14 @@ def claim(
 app_commands = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
+    rich_markup_mode=None,
     help="Manage the client apps this aggregator issues credentials to.",
 )
 app.add_typer(app_commands, name="app")
 
-_KeyOption = Annotated[str, typer.Option("--key", help="The app's key, matching [a-z0-9-]+.")]
+_KeyOption = Annotated[
+    str, typer.Option("--key", help=f"The app's key, matching {KEY_PATTERN.pattern}.")
+]
 
 
 def _writable_store_or_exit(config_dir: Path | None) -> Path:

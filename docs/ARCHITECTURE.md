@@ -463,7 +463,7 @@ cli.claim
   -> save_access_url(store, entry.key, access_url)
   -> _probe_access_url(access_url): GET /accounts?balances-only=1, one attempt
        "Checking that the credentials work..." on stderr, then:
-       success    -> nothing further printed
+       success    -> "Credentials work."
        failure    -> "warning: could not confirm ..."; exit code stays 0
   -> warn if no [[providers]] entry names this key
 ```

@@ -611,6 +611,19 @@ def test_claim_probes_the_stored_access_url_with_balances_only(
     assert "warning" not in result.stderr
 
 
+def test_a_succeeding_probe_confirms_the_credentials_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Requirement: a working probe says so, not just silence after "Checking..."."""
+    _ = _install_provider(monkeypatch, _responds(200, ACCESS_URL))
+    _ = _install_probe(monkeypatch, _responds(200, "{}"))
+
+    result = _run_claim(tmp_path, SETUP_TOKEN)
+
+    assert result.exit_code == 0
+    assert "Credentials work." in result.stderr
+
+
 def test_a_failing_probe_warns_and_exits_zero_but_keeps_the_stored_access_url(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
