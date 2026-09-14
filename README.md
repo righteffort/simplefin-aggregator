@@ -89,11 +89,12 @@ saying "yes" to "trust this site?"
 setup token you issue embeds it, so it has to be ASCII: give an
 internationalized host in its encoded form.
 
-**`config.toml` holds no credentials.** Keep it readable only by its owner
-anyway — anyone who can write it can move `bind_host` off the loopback
-interface. The same goes double for the directory it sits in: a directory
-another local user can write lets them replace the files this application
-depends on, and every command that writes there will warn you about it.
+**`config.toml` holds no credentials**, but keep it accessible only to its
+owner: anyone who can write it can move `bind_host` off the loopback interface
+or add a provider root of their own, and anyone who can write the directory it
+sits in can replace the files this application depends on. Commands that load
+`config.toml` or write to that directory warn you when either is open to other
+users.
 
 #### Account ids and prefixes
 
