@@ -1,36 +1,16 @@
-# Short-term fit and finish [agentic]
-- `--config-dir` SHOULD BE A GLOBAL not buried in commands, sub-commands,
-  sub-sub-commands, ...! It is applicable to practically all
-  commands/subcommands subcommands (and can be ignored for any current or future
-  commands that do not need it), and is nice to show to users as part of
-  `simplefin-aggregator --help`.
-- if feasible, when failing in `app.py:create_app` due to an unclaimed
-  providers, show them all. Currently the app exits on the first one on the call
-  to `_resolve_access_url` and the user encounters them one by one.
-- why have labels for app tokens?
-- cli app new help should state restrictions on keys for app tokens
-- why have labels at all for custom providers?
-- `cli.py:_probe_access_url`: 'Checking that the credentials work...' then
-  silence on success !
-- README: "Keep [`config.toml` and the config dir] readable" is both unhelpful
-  (what's the impact) and informal ("goes double")
-
-# Repairs to last round of agentic fit and finish
-- reverse the decision to use `rich_markup_mode=None` and instead simply
-  backtick the patterns. Also get rid of the overly clever factoring of
-  `_KeyOption` when it is only relevant to `app new`.
-
 # Short-term fit and finish [human]
 - emphasize that `providers_creds.json` holds bearer tokens and what that means!
+- README: "`config.toml` holds no credentials ..." is unhelpful: threats are unclear.
 - a pointer in README to https://www.simplefin.org/protocol.html#app-quickstart
   for devs who want to smoketest simplefin-aggregator from the command line
   would be nice
 - add a quickstart section to the top of the README
-- maybe add an actualbudget+lunchmoney quickstart section to the top of the
+  - maybe add an actualbudget+lunchmoney quickstpart section to the top of the
   README
 
 # Medium-term fit and finish
-- ship a docker image
+- ship a docker image righteffort/simplefin-aggregator
+- ship a python package similarly
 - maybe: provide an example docker_compose.yml .. currently in .notes/docker-compose-example.yml
 
 # Other future work

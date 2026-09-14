@@ -5,6 +5,7 @@ description = "A SimpleFIN Bridge server that fans out to one or more SimpleFIN 
 readme = "README.md"
 requires-python = ">=3.12.4"
 license = "GPL-3.0-only"
+license-files = ["LICENSE", "gpl-3.0.txt"]
 dependencies = [
     "fastapi>=0.141.1",
     "uvicorn>=0.52.4",
@@ -24,6 +25,12 @@ dev = [
     "ruff>=0.16.5",
     "basedpyright>=1.39.10",
 ]
+
+[project.urls]
+Homepage = "https://github.com/righteffort/simplefin-aggregator/tree/main"
+Source = "https://github.com/righteffort/simplefin-aggregator.git"
+Documentation = "https://github.com/righteffort/simplefin-aggregator?tab=readme-ov-file"
+Issues = "https://github.com/righteffort/simplefin-aggregator/issues"
 
 [build-system]
 requires = ["hatchling"]
