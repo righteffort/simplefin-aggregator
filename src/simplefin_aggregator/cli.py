@@ -11,6 +11,7 @@ import httpx2
 import typer
 import uvicorn
 from pydantic import SecretStr
+from rich.markup import escape
 
 from .access_log import install_access_log_redaction
 from .app import CLAIM_PATH_PREFIX, ProviderAccessUrlError, create_app
@@ -52,11 +53,10 @@ if TYPE_CHECKING:
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
-    rich_markup_mode=None,
     help=(
         "simplefin-aggregator: a SimpleFIN Bridge server backed by other SimpleFIN "
-        f"providers. Reads and writes its state in the directory named by {DIR_ENV_VAR}, "
-        f"or {default_config_dir()} if that is unset."
+        f"providers. Configuration and state are in the directory ${DIR_ENV_VAR}, "
+        f"or {default_config_dir()} if unset."
     ),
 )
 
@@ -225,13 +225,7 @@ def _probe_access_url(access_url: NormalizedUrl) -> str | None:
 
 @app.command()
 def claim(
-    provider: Annotated[
-        str | None,
-        typer.Option(
-            "--provider",
-            help=f"Provider key, matching {KEY_PATTERN.pattern}. Asked for if omitted.",
-        ),
-    ] = None,
+    provider: Annotated[str | None, typer.Option("--provider", help="Provider key.")] = None,
 ) -> None:
     """Claim a one-time SimpleFIN setup token and store the access URL it returns."""
     loaded_config = _load_config_or_exit()
@@ -307,14 +301,9 @@ def claim(
 app_commands = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
-    rich_markup_mode=None,
     help="Manage the client apps this aggregator issues credentials to.",
 )
 app.add_typer(app_commands, name="app")
-
-_KeyOption = Annotated[
-    str, typer.Option("--key", help=f"The app's key, matching {KEY_PATTERN.pattern}.")
-]
 
 
 def _writable_store_or_exit() -> Path:
@@ -352,7 +341,11 @@ def _print_setup_token(base_url: str, claim_secret: str, key: str, store_path: P
 
 
 @app_commands.command("new")
-def app_new(key: _KeyOption) -> None:
+def app_new(
+    key: Annotated[
+        str, typer.Option("--key", help=escape(f"The app's key, matching {KEY_PATTERN.pattern}."))
+    ],
+) -> None:
     """Issue a setup token for a client app that does not have one yet."""
     loaded_config = _load_config_or_exit()
     _check_key(key)
@@ -410,7 +403,7 @@ def app_list() -> None:
 
 
 @app_commands.command("revoke")
-def app_revoke(key: _KeyOption) -> None:
+def app_revoke(key: Annotated[str, typer.Option("--key", help="The app's key.")]) -> None:
     """Forget a client app, so its credentials stop working and its token cannot be claimed."""
     _check_key(key)
     store_path = _writable_store_or_exit()
@@ -427,7 +420,7 @@ def app_revoke(key: _KeyOption) -> None:
 
 
 @app_commands.command("regen")
-def app_regen(key: _KeyOption) -> None:
+def app_regen(key: Annotated[str, typer.Option("--key", help="The app's key.")]) -> None:
     """Issue a client app a fresh setup token, revoking whatever it holds now."""
     loaded_config = _load_config_or_exit()
     _check_key(key)
