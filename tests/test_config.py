@@ -442,6 +442,19 @@ def test_provider_entries_are_the_built_in_ones_plus_the_config_s(tmp_path: Path
     assert entries[-1].root.origin_and_path == "https://provider.example.com/simplefin/"
 
 
+def test_a_custom_providers_label_defaults_to_its_key(tmp_path: Path) -> None:
+    without_label = VALID_TOML.replace('label = "My Bank"\n', "")
+    config = load_config(_write(tmp_path, without_label))
+
+    assert config.provider_entries()[-1].label == "my-bank"
+
+
+def test_an_explicit_custom_provider_label_replaces_the_default(tmp_path: Path) -> None:
+    config = load_config(_write(tmp_path, VALID_TOML))
+
+    assert config.provider_entries()[-1].label == "My Bank"
+
+
 def test_load_config_accepts_a_provider_key_naming_a_built_in_provider(tmp_path: Path) -> None:
     """A built-in provider needs no custom provider entry of its own."""
     built_in_only = _with_provider_key("redbark")

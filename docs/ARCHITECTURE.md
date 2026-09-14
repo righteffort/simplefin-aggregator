@@ -171,9 +171,10 @@ built-in list does not name. Its `@field_validator("root")` runs
 `parse_root()` and reports a bad root against that one field, rather than
 leaving it to the model-level check to reject the whole `Config` — so the
 error names the offending entry instead of, via pydantic's default
-`ValidationError` rendering, the entire file. `as_provider_entry()` converts
-one into a `ProviderEntry`, validating both `key` and `root` again in the
-process; `provider_entries()` merges the result into `KNOWN_PROVIDERS`
+`ValidationError` rendering, the entire file. `label` is optional and
+defaults to `key`. `as_provider_entry()` converts one into a `ProviderEntry`,
+validating both `key` and `root` again in the process; `provider_entries()`
+merges the result into `KNOWN_PROVIDERS`
 through `merged_providers`, which rejects a duplicate key rather than letting
 a custom entry shadow or collide with a built-in one.
 

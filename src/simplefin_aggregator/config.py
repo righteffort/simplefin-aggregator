@@ -104,7 +104,9 @@ class CustomProvider(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     key: str
-    label: str
+    # None means the file said nothing; as_provider_entry defaults it to key,
+    # so every ProviderEntry a caller sees already has one.
+    label: str | None = None
     root: str
 
     @field_validator("root")
@@ -122,7 +124,9 @@ class CustomProvider(BaseModel):
     def as_provider_entry(self) -> ProviderEntry:
         """Convert to a registry entry, validating the key and the root."""
         return ProviderEntry(
-            key=self.key, label=self.label, root=_parse_root_or_value_error(self.root)
+            key=self.key,
+            label=self.key if self.label is None else self.label,
+            root=_parse_root_or_value_error(self.root),
         )
 
 

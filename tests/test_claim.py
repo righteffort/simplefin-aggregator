@@ -217,6 +217,16 @@ def test_claim_offers_the_built_in_providers_alongside_the_configured_one(tmp_pa
 
 
 @pytest.mark.usefixtures("claim_succeeds")
+def test_claim_menu_shows_a_labelless_custom_provider_by_its_key(tmp_path: Path) -> None:
+    unlabeled = CONFIG_TOML.replace(f'label = "{PROVIDER_LABEL}"\n', "")
+    result = _run_claim(tmp_path, SETUP_TOKEN, config=unlabeled)
+
+    assert result.exit_code == 0
+    assert f"{PROVIDER_KEY} ({PROVIDER_ROOT}/)" in result.stdout
+    assert PROVIDER_LABEL not in result.stdout
+
+
+@pytest.mark.usefixtures("claim_succeeds")
 def test_claim_does_not_echo_the_token_typed_at_a_real_terminal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

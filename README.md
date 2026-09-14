@@ -77,7 +77,8 @@ key = "my-bridge"
 must be unique.  `root` (with `/` appended if it is not specified) is
 the prefix of the provider's claim and access URLs. It must be
 `https`, unless the host is a literal loopback IP address such as
-`127.0.0.1` or `[::1]`.
+`127.0.0.1` or `[::1]`. `label` is what the claim menu shows for it;
+it defaults to `key` if omitted.
 
 Editing this file is deliberately the only way to add a provider, to
 discourage phishing modes such as trusting a malicious provider with a
