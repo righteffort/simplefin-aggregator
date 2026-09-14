@@ -350,11 +350,7 @@ def _print_setup_token(base_url: str, claim_secret: str, key: str) -> None:
 
 
 @app_commands.command("new")
-def app_new(
-    ctx: typer.Context,
-    key: _KeyOption,
-    label: Annotated[str, typer.Option("--label", help="How `app list` should name it.")],
-) -> None:
+def app_new(ctx: typer.Context, key: _KeyOption) -> None:
     """Issue a setup token for a client app that does not have one yet."""
     config_dir = _config_dir(ctx)
     loaded_config = _load_config_or_exit(config_dir)
@@ -371,7 +367,7 @@ def app_new(
                     f"error: an app with key {key!r} already exists.",
                     f"To replace its credentials with a fresh setup token: app regen --key {key}",
                 )
-            claim_secret, apps[key] = new_app_token(label)
+            claim_secret, apps[key] = new_app_token()
     except StateFileError as exc:
         _fail(f"error: {exc}")
 
@@ -394,14 +390,13 @@ def app_list(ctx: typer.Context) -> None:
         _fail(f"error: {exc}")
 
     if not apps:
-        typer.echo("No apps yet. Create one with `app new --key <key> --label <label>`.", err=True)
+        typer.echo("No apps yet. Create one with `app new --key <key>`.", err=True)
         return
 
-    header = ("KEY", "LABEL", "STATUS", "CREATED", "CLAIMED")
+    header = ("KEY", "STATUS", "CREATED", "CLAIMED")
     rows = [
         (
             key,
-            record.label,
             record.status,
             _format_time(record.created_at),
             _format_time(record.claimed_at) if isinstance(record, ClaimedAppToken) else "",
@@ -442,12 +437,9 @@ def app_regen(ctx: typer.Context, key: _KeyOption) -> None:
 
     try:
         with update_app_tokens(store_path) as apps:
-            existing = apps.get(key)
-            if existing is None:
+            if key not in apps:
                 _fail(f"error: no app has key {key!r}. `app list` shows the ones that do.")
-            # The label is the one thing that survives; everything else about
-            # the record is what is being replaced.
-            claim_secret, apps[key] = new_app_token(existing.label)
+            claim_secret, apps[key] = new_app_token()
     except StateFileError as exc:
         _fail(f"error: {exc}")
 
@@ -484,7 +476,7 @@ def _check_app_store_or_exit(config_dir: Path | None) -> None:
         # installing the server and issuing the first app its token.
         no_apps = (
             "warning: no client apps yet, so every request will be refused. "
-            "Issue one with `app new --key <key> --label <label>`."
+            "Issue one with `app new --key <key>`."
         )
         typer.echo(no_apps, err=True)
 

@@ -59,8 +59,8 @@ def test_a_username_no_app_answers_to_is_refused(tmp_path: Path) -> None:
 
 
 def test_credentials_from_one_app_do_not_admit_another_apps(tmp_path: Path) -> None:
-    username, _ = make_claimed_app(tmp_path, key="first", label="First")
-    _, other_password = make_claimed_app(tmp_path, key="second", label="Second")
+    username, _ = make_claimed_app(tmp_path, key="first")
+    _, other_password = make_claimed_app(tmp_path, key="second")
 
     response = _protected_client(tmp_path).get("/protected", auth=(username, other_password))
 
@@ -107,8 +107,8 @@ def test_revoking_an_app_takes_effect_without_a_restart(tmp_path: Path) -> None:
 
 
 def test_revoking_one_app_leaves_another_working(tmp_path: Path) -> None:
-    first = make_claimed_app(tmp_path, key="first", label="First")
-    second = make_claimed_app(tmp_path, key="second", label="Second")
+    first = make_claimed_app(tmp_path, key="first")
+    second = make_claimed_app(tmp_path, key="second")
     client = _protected_client(tmp_path)
 
     with update_app_tokens(app_tokens_path(tmp_path)) as apps:

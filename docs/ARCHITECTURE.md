@@ -182,13 +182,11 @@ a custom entry shadow or collide with a built-in one.
 ```text
 UnclaimedAppToken                     # a setup token issued and not yet spent
   status: Literal["unclaimed"]
-  label: str
   created_at: AwareDatetime
   claim_token_sha256: _Sha256Hex
 
 ClaimedAppToken                       # what a claim exchanged it for
   status: Literal["claimed"]
-  label: str
   created_at: AwareDatetime
   claimed_at: AwareDatetime
   username_sha256: _Sha256Hex
@@ -503,13 +501,13 @@ used elsewhere in this codebase.
 ### CLI `app new` / `regen` / `revoke` (obtaining/revoking *this aggregator's* tokens)
 
 ```text
-cli.app_new(ctx, key, label)
+cli.app_new(ctx, key)
   -> _load_config_or_exit(...)                  # for base_url
   -> _check_key(key)                            # rejected keys are never named back
   -> _writable_store_or_exit(config_dir)        # directory writable, and warn if shared
   -> update_app_tokens(store):                  # one locked read-modify-write
        key already present -> exit 1, naming `app regen`, store untouched
-       else -> new_app_token(label) -> (secret, UnclaimedAppToken)
+       else -> new_app_token() -> (secret, UnclaimedAppToken)
   -> build_setup_token(base_url, secret) -> stdout, alone
   -> "shown once" note -> stderr
 ```
@@ -521,10 +519,9 @@ has no record of looks to the user like a working setup that never syncs. And
 a rejected `--key` is not echoed, because a mistyped one is most often a
 pasted setup token and base64 is exactly what `[a-z0-9-]+` rejects.
 
-`app regen` is the same flow over an existing record, keeping only the label.
-`app revoke` deletes the record outright. Neither leaves an app holding a live
-credential and an unspent token at once, which is what would make "revoked"
-mean two things.
+`app regen` is the same flow over an existing record. `app revoke` deletes the
+record outright. Neither leaves an app holding a live credential and an
+unspent token at once, which is what would make "revoked" mean two things.
 
 ### `POST /simplefin/claim/{token}`
 

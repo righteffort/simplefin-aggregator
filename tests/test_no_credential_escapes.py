@@ -55,17 +55,7 @@ def test_a_full_flow_puts_no_credential_anywhere_a_person_would_see(
 
     with caplog.at_level(logging.DEBUG):
         issued = runner.invoke(
-            cli.app,
-            [
-                "--config-dir",
-                str(tmp_path),
-                "app",
-                "new",
-                "--key",
-                "actual-budget",
-                "--label",
-                "AB",
-            ],
+            cli.app, ["--config-dir", str(tmp_path), "app", "new", "--key", "actual-budget"]
         )
         setup_token = issued.stdout.strip()
         claim_url = base64.b64decode(setup_token, validate=True).decode("ascii")

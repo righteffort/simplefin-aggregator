@@ -185,7 +185,7 @@ new key.
 ### 3. Issue your client app a setup token
 
 ```sh
-uv run simplefin-aggregator app new --key actual-budget --label "Actual Budget"
+uv run simplefin-aggregator app new --key actual-budget
 ```
 
 `--key` names the app in `app list` and `app revoke`, and must match
@@ -227,16 +227,16 @@ uv run simplefin-aggregator app revoke --key <key>
 uv run simplefin-aggregator app regen  --key <key>
 ```
 
-`app list` shows each app's key, label, status and timestamps. It cannot show
-you a credential, because the store holds none: everything in it is a digest,
+`app list` shows each app's key, status and timestamps. It cannot show you a
+credential, because the store holds none: everything in it is a digest,
 verified against what an app presents and never reproduced.
 
 `app revoke` removes an app. Its credentials stop working on the next request
 — the server reads the store every time, so there is nothing to restart.
 
-`app regen` issues an app a new setup token, keeping its key and label. Whatever
-it held before — live credentials or an unclaimed token — stops working
-immediately. This is the only way to reuse a key.
+`app regen` issues an app a new setup token, keeping its key. Whatever it held
+before — live credentials or an unclaimed token — stops working immediately.
+This is the only way to reuse a key.
 
 **`aggregator_creds.json` is disposable.** Losing it costs one fresh setup
 token per client app, which is a different situation from

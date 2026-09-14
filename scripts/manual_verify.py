@@ -211,9 +211,7 @@ def run(demo_setup_tokens: tuple[str, str], config_dir: Path) -> None:
         )
 
     print("==> Issuing a setup token for this run")
-    setup_token = aggregator(
-        "app", "new", "--key", APP_KEY, "--label", "Manual verify", config_dir=config_dir
-    )
+    setup_token = aggregator("app", "new", "--key", APP_KEY, config_dir=config_dir)
     claim_url = base64.b64decode(setup_token).decode("ascii")
 
     with serving(config_dir):
