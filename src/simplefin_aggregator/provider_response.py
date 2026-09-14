@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """A single provider's response to one request."""
 
 from __future__ import annotations

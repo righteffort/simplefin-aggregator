@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Build a provider's long-lived httpx2.AsyncClient."""
 
 from __future__ import annotations

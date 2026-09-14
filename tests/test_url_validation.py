@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Tests for url_validation.py's provider-root matching.
 
 `.invalid` (RFC 2606) is reserved and guaranteed never to resolve, so it is

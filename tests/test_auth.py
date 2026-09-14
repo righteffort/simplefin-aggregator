@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Tests for the Basic Auth dependency the client app's requests go through."""
 
 from __future__ import annotations

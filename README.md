@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
 # simplefin-aggregator
 
 A server that implements the [SimpleFIN Bridge

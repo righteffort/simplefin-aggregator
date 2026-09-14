@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """The set of providers that can supply a setup token.
 
 A setup token is a base64-encoded URL pasted in from a web page, so the URL

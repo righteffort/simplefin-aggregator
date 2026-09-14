@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Tests for `POST /simplefin/claim/{token}`, which spends a setup token once."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """The access URLs this aggregator holds for its providers.
 
 This is the most sensitive file this application owns: an access URL embeds

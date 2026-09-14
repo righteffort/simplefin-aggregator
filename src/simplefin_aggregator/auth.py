@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """HTTP Basic Auth dependency for endpoints the client app calls."""
 
 from __future__ import annotations

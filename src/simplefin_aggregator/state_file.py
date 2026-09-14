@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Shared file handling for everything this application keeps on disk.
 
 This module supports making guarantees common to all files, independent of their

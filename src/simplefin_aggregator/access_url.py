@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Build the access URL this aggregator hands back to the client app."""
 
 from __future__ import annotations

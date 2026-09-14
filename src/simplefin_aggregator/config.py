@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Configuration model and loading for simplefin-aggregator.
 
 Exposes public types `Config` and `Provider`, in which every field is typed and

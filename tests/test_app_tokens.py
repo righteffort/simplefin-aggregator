@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Tests for the app token store."""
 
 from __future__ import annotations

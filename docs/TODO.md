@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
 # Short-term fit and finish [human]
 - emphasize that `providers_creds.json` holds bearer tokens and what that means!
 - README: "`config.toml` holds no credentials ..." is unhelpful: threats are unclear.

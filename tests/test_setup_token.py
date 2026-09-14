@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 import base64
 
 from simplefin_aggregator.setup_token import build_setup_token
