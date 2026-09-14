@@ -14,7 +14,7 @@ import uvicorn
 from pydantic import SecretStr
 
 from .access_log import install_access_log_redaction
-from .app import CLAIM_PATH_PREFIX, create_app
+from .app import CLAIM_PATH_PREFIX, ProviderAccessUrlError, create_app
 from .app_tokens import (
     ClaimedAppToken,
     app_tokens_path,
@@ -460,6 +460,8 @@ def _build_app_or_exit(loaded_config: Config, config_dir: Path | None) -> FastAP
         return create_app(loaded_config, access_urls, app_tokens_path(config_dir))
     except (StateFileError, UrlValidationError) as exc:
         _fail(f"error: {exc}")
+    except ProviderAccessUrlError as exc:
+        _fail(*(f"error: {message}" for message in exc.messages))
 
 
 def _check_app_store_or_exit(config_dir: Path | None) -> None:

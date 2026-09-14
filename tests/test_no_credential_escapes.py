@@ -15,19 +15,20 @@ from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
 
 import httpx2
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from typer.testing import CliRunner
 
 from simplefin_aggregator import cli
 from simplefin_aggregator.app_tokens import app_tokens_path
+from simplefin_aggregator.provider_access_urls import provider_creds_path, save_access_url
 
 from .support import PROVIDER_KEY, install_provider_transport, make_app
 
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 runner = CliRunner()
 
@@ -121,3 +122,74 @@ def test_a_full_flow_puts_no_credential_anywhere_a_person_would_see(
     # not where they could have gone.
     assert claim_secret not in listed.stdout
     assert issued.stdout == f"{setup_token}\n"
+
+
+def test_startup_reports_several_failing_providers_without_either_password(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Aggregating every provider's startup failure into one report names no password.
+
+    Each provider's stored access URL is rejected for a config drift a real
+    operator could hit -- the root moved after the URL was claimed -- and each
+    carries its own password, distinguishable so a corpus entry that leaked
+    the wrong provider's secret would still be caught.
+    """
+    config_toml = f"""
+base_url = "{BASE_URL}"
+
+[[custom_providers]]
+key = "first-bank"
+label = "First Bank"
+root = "https://first.example.com/simplefin"
+
+[[providers]]
+key = "first-bank"
+
+[[custom_providers]]
+key = "second-bank"
+label = "Second Bank"
+root = "https://second.example.com/simplefin"
+
+[[providers]]
+key = "second-bank"
+"""
+    config_path = tmp_path / "config.toml"
+    _ = config_path.write_text(config_toml)
+    config_path.chmod(0o600)
+
+    first_password = "s3cret-first-bank-password"  # noqa: S105
+    second_password = "s3cret-second-bank-password"  # noqa: S105
+    save_access_url(
+        provider_creds_path(tmp_path),
+        "first-bank",
+        SecretStr(f"https://user:{first_password}@first.example.com/simplefin"),
+    )
+    save_access_url(
+        provider_creds_path(tmp_path),
+        "second-bank",
+        SecretStr(f"https://user:{second_password}@second.example.com/simplefin"),
+    )
+
+    # Both roots move, so both stored access URLs now fail validation.
+    moved_toml = config_toml.replace(
+        'root = "https://first.example.com/simplefin"',
+        'root = "https://moved-first.example.com/simplefin"',
+    ).replace(
+        'root = "https://second.example.com/simplefin"',
+        'root = "https://moved-second.example.com/simplefin"',
+    )
+    _ = config_path.write_text(moved_toml)
+
+    def fake_run(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("uvicorn must not start when a provider's access URL is unresolved")
+
+    monkeypatch.setattr(cli.uvicorn, "run", fake_run)  # pyright: ignore[reportPrivateLocalImportUsage]
+
+    result = runner.invoke(cli.app, ["--config-dir", str(tmp_path), "serve"])
+
+    assert result.exit_code == 1
+    # Both providers are named, which is the report this test exists to pin.
+    assert "https://moved-first.example.com/simplefin/" in result.stderr
+    assert "https://moved-second.example.com/simplefin/" in result.stderr
+    assert first_password not in result.stderr
+    assert second_password not in result.stderr

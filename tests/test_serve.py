@@ -192,6 +192,27 @@ def test_serve_fails_when_one_of_several_providers_has_not_been_claimed(
     assert "no access URL stored for provider 'other-bank'" in result.stderr
 
 
+def test_serve_reports_every_unresolved_provider_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Neither an unclaimed provider nor a root mismatch hides the other's report."""
+    moved_root = SECOND_PROVIDER_TOML.replace(
+        'root = "https://provider.example.com/simplefin"',
+        'root = "https://moved.example.com/simplefin"',
+    )
+    _ = _write_config(tmp_path, moved_root)
+    _claim(tmp_path)  # claimed for 'my-bank', whose root just moved
+    calls = _fake_uvicorn(monkeypatch)
+
+    result = runner.invoke(cli.app, _serve_args(tmp_path))
+
+    assert result.exit_code == 1
+    assert calls == []
+    assert "https://moved.example.com/simplefin/" in result.stderr
+    assert "no access URL stored for provider 'other-bank'" in result.stderr
+    assert "s3cret-provider-password" not in result.stderr
+
+
 def test_serve_fails_when_the_stored_access_url_no_longer_matches_the_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

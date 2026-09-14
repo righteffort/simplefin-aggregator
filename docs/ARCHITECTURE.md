@@ -430,8 +430,13 @@ configured `provider.key` it resolves the entry, looks the key up in the store
 (missing → "claim one first"), and re-runs `validate_access_url` against that
 provider's *current* root. That is a single-entry comparison, not a scan — the
 URL was claimed from one specific provider, so that is the root it must still
-match. All of it happens before uvicorn starts, so a config change that
-invalidates a stored URL fails at startup, not on the first request.
+match. Every provider's check runs regardless of the others' outcome, and
+`create_app` raises every failure together as one `ProviderAccessUrlError`;
+`cli.py` prints each on its own line, the same display-safe text
+`validate_access_url`/`StateFileError` produce for a single provider, so
+"Cross-cutting: secrets and logging" governs it unchanged. All of it happens
+before uvicorn starts, so a config change that invalidates a stored URL fails
+at startup, not on the first request.
 
 The app token store is checked at startup but **not read into the app**: the
 server reads it on every authenticated request and writes it on every claim, so
