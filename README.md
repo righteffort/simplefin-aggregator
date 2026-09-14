@@ -155,7 +155,7 @@ of them. This has these consequences:
 For each of your providers: Get a one-time-use setup token, then:
 
 ```sh
-uv run simplefin-aggregator claim <key>
+uv run simplefin-aggregator claim [<key>]
 ```
 
 `claim` prompts for the setup token, uses it to obtain an access URL, and
