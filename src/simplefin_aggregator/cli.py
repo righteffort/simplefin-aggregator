@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import sys
 from http import HTTPStatus
-from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NoReturn, cast
 
 import httpx2
@@ -22,7 +21,15 @@ from .app_tokens import (
     new_app_token,
     update_app_tokens,
 )
-from .config import Config, ConfigError, config_path, default_config_dir, load_config
+from .config import (
+    DIR_ENV_VAR,
+    Config,
+    ConfigError,
+    config_dir,
+    config_path,
+    default_config_dir,
+    load_config,
+)
 from .provider_access_urls import load_access_urls, provider_creds_path, save_access_url
 from .provider_registry import KEY_PATTERN, ProviderRegistryError, find_provider
 from .setup_token import build_setup_token
@@ -33,6 +40,7 @@ from .url_validation import UrlValidationError, validate_access_url, validate_cl
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
+    from pathlib import Path
 
     from fastapi import FastAPI
 
@@ -41,7 +49,16 @@ if TYPE_CHECKING:
 
 # Help text here is plain text: in Typer's "rich" mode a bracketed pattern such
 # as the key rule is read as a markup tag and silently dropped.
-app = typer.Typer(add_completion=False, no_args_is_help=True, rich_markup_mode=None)
+app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    rich_markup_mode=None,
+    help=(
+        "simplefin-aggregator: a SimpleFIN Bridge server backed by other SimpleFIN "
+        f"providers. Reads and writes its state in the directory named by {DIR_ENV_VAR}, "
+        f"or {default_config_dir()} if that is unset."
+    ),
+)
 
 
 # Longer than the probe's: a read timeout comes after the POST has gone out,
@@ -59,30 +76,6 @@ def _stdin_is_a_terminal() -> bool:
     return sys.stdin.isatty()
 
 
-_ConfigDirOption = Annotated[
-    Path | None,
-    typer.Option(
-        "--config-dir",
-        envvar="SIMPLEFIN_AGGREGATOR_CONFIG_DIR",
-        help=(
-            f"Configuration directory (default: {default_config_dir()}). "
-            "Also read from SIMPLEFIN_AGGREGATOR_CONFIG_DIR; the flag wins if both are given."
-        ),
-    ),
-]
-
-
-@app.callback()
-def main_callback(ctx: typer.Context, config_dir: _ConfigDirOption = None) -> None:
-    """simplefin-aggregator: a SimpleFIN Bridge server backed by other SimpleFIN providers."""
-    ctx.obj = config_dir
-
-
-def _config_dir(ctx: typer.Context) -> Path | None:
-    """Read back the `--config-dir` `main_callback` stashed on the context, typed."""
-    return cast("Path | None", ctx.obj)
-
-
 def _fail(*lines: str) -> NoReturn:
     """Report an error on stderr and exit non-zero."""
     for line in lines:
@@ -90,9 +83,9 @@ def _fail(*lines: str) -> NoReturn:
     raise typer.Exit(code=1)
 
 
-def _load_config_or_exit(config_dir: Path | None) -> Config:
+def _load_config_or_exit() -> Config:
     try:
-        return load_config(config_path(config_dir))
+        return load_config(config_path())
     except ConfigError as exc:
         _fail(f"error: {exc}")
 
@@ -232,7 +225,6 @@ def _probe_access_url(access_url: NormalizedUrl) -> str | None:
 
 @app.command()
 def claim(
-    ctx: typer.Context,
     provider: Annotated[
         str | None,
         typer.Option(
@@ -242,9 +234,8 @@ def claim(
     ] = None,
 ) -> None:
     """Claim a one-time SimpleFIN setup token and store the access URL it returns."""
-    config_dir = _config_dir(ctx)
-    loaded_config = _load_config_or_exit(config_dir)
-    store_path = provider_creds_path(config_dir)
+    loaded_config = _load_config_or_exit()
+    store_path = provider_creds_path()
 
     # Before the token is spent, since a file problem found after the POST is a
     # lost credential: the token cannot be claimed a second time.
@@ -274,7 +265,7 @@ def claim(
             f"Nothing was claimed and the setup token is still unspent. Check that you "
             f"pasted the whole token and that it came from {entry.label}; a provider "
             f"the menu does not list needs a [[custom_providers]] entry in "
-            f"{config_path(config_dir)} before its tokens can be claimed."
+            f"{config_path()} before its tokens can be claimed."
         )
         _fail(f"error: {exc}", what_to_check)
 
@@ -307,7 +298,7 @@ def claim(
         # claim the config does not reference would otherwise look like a
         # success and then fail at startup with "claim one first".
         unreferenced = (
-            f"warning: no [[providers]] entry in {config_path(config_dir)} names "
+            f"warning: no [[providers]] entry in {config_path()} names "
             f"key {entry.key!r}, so serve will not use this access URL."
         )
         typer.echo(unreferenced, err=True)
@@ -326,9 +317,9 @@ _KeyOption = Annotated[
 ]
 
 
-def _writable_store_or_exit(config_dir: Path | None) -> Path:
+def _writable_store_or_exit() -> Path:
     """Where the store lives, having reported anything about the directory first."""
-    store_path = app_tokens_path(config_dir)
+    store_path = app_tokens_path()
     try:
         check_can_save(store_path)
     except StateFileError as exc:
@@ -349,8 +340,9 @@ def _check_key(key: str, option: str = "--key") -> None:
         _fail(f"error: {option} must match {KEY_PATTERN.pattern}")
 
 
-def _print_setup_token(base_url: str, claim_secret: str, key: str) -> None:
+def _print_setup_token(base_url: str, claim_secret: str, key: str, store_path: Path) -> None:
     """Put the setup token on stdout alone, so `$(...)` captures it and nothing else."""
+    typer.echo(f"note: {key!r} is now in {store_path}.", err=True)
     typer.echo(build_setup_token(base_url, claim_secret))
     shown_once = (
         f"note: this setup token is shown once and is not stored. If it is lost before "
@@ -360,12 +352,11 @@ def _print_setup_token(base_url: str, claim_secret: str, key: str) -> None:
 
 
 @app_commands.command("new")
-def app_new(ctx: typer.Context, key: _KeyOption) -> None:
+def app_new(key: _KeyOption) -> None:
     """Issue a setup token for a client app that does not have one yet."""
-    config_dir = _config_dir(ctx)
-    loaded_config = _load_config_or_exit(config_dir)
+    loaded_config = _load_config_or_exit()
     _check_key(key)
-    store_path = _writable_store_or_exit(config_dir)
+    store_path = _writable_store_or_exit()
 
     try:
         # The check and the add are one locked update: read the store first and
@@ -383,7 +374,7 @@ def app_new(ctx: typer.Context, key: _KeyOption) -> None:
 
     # After the store is written, never before: a token this aggregator has no
     # record of looks to the user like a working setup that never syncs.
-    _print_setup_token(loaded_config.base_url, claim_secret, key)
+    _print_setup_token(loaded_config.base_url, claim_secret, key, store_path)
 
 
 def _format_time(when: datetime) -> str:
@@ -391,11 +382,10 @@ def _format_time(when: datetime) -> str:
 
 
 @app_commands.command("list")
-def app_list(ctx: typer.Context) -> None:
+def app_list() -> None:
     """Show the client apps."""
-    config_dir = _config_dir(ctx)
     try:
-        apps = load_app_tokens(app_tokens_path(config_dir))
+        apps = load_app_tokens(app_tokens_path())
     except StateFileError as exc:
         _fail(f"error: {exc}")
 
@@ -420,11 +410,10 @@ def app_list(ctx: typer.Context) -> None:
 
 
 @app_commands.command("revoke")
-def app_revoke(ctx: typer.Context, key: _KeyOption) -> None:
+def app_revoke(key: _KeyOption) -> None:
     """Forget a client app, so its credentials stop working and its token cannot be claimed."""
-    config_dir = _config_dir(ctx)
     _check_key(key)
-    store_path = _writable_store_or_exit(config_dir)
+    store_path = _writable_store_or_exit()
 
     try:
         with update_app_tokens(store_path) as apps:
@@ -438,12 +427,11 @@ def app_revoke(ctx: typer.Context, key: _KeyOption) -> None:
 
 
 @app_commands.command("regen")
-def app_regen(ctx: typer.Context, key: _KeyOption) -> None:
+def app_regen(key: _KeyOption) -> None:
     """Issue a client app a fresh setup token, revoking whatever it holds now."""
-    config_dir = _config_dir(ctx)
-    loaded_config = _load_config_or_exit(config_dir)
+    loaded_config = _load_config_or_exit()
     _check_key(key)
-    store_path = _writable_store_or_exit(config_dir)
+    store_path = _writable_store_or_exit()
 
     try:
         with update_app_tokens(store_path) as apps:
@@ -453,20 +441,20 @@ def app_regen(ctx: typer.Context, key: _KeyOption) -> None:
     except StateFileError as exc:
         _fail(f"error: {exc}")
 
-    _print_setup_token(loaded_config.base_url, claim_secret, key)
+    _print_setup_token(loaded_config.base_url, claim_secret, key, store_path)
 
 
-def _build_app_or_exit(loaded_config: Config, config_dir: Path | None) -> FastAPI:
+def _build_app_or_exit(loaded_config: Config) -> FastAPI:
     try:
-        access_urls = load_access_urls(provider_creds_path(config_dir))
-        return create_app(loaded_config, access_urls, app_tokens_path(config_dir))
+        access_urls = load_access_urls(provider_creds_path())
+        return create_app(loaded_config, access_urls, app_tokens_path())
     except (StateFileError, UrlValidationError) as exc:
         _fail(f"error: {exc}")
     except ProviderAccessUrlError as exc:
         _fail(*(f"error: {message}" for message in exc.messages))
 
 
-def _check_app_store_or_exit(config_dir: Path | None) -> None:
+def _check_app_store_or_exit() -> None:
     """Fail before uvicorn starts if the store cannot be read or written.
 
     The server reads this file on every authenticated request and writes it on
@@ -474,7 +462,7 @@ def _check_app_store_or_exit(config_dir: Path | None) -> None:
     is a server that answers 403 to everything and loses every claim -- found
     here rather than by the first client app that tries.
     """
-    store_path = app_tokens_path(config_dir)
+    store_path = app_tokens_path()
     try:
         apps = load_app_tokens(store_path)
         check_can_save(store_path)
@@ -492,12 +480,13 @@ def _check_app_store_or_exit(config_dir: Path | None) -> None:
 
 
 @app.command()
-def serve(ctx: typer.Context) -> None:
+def serve() -> None:
     """Read the config and run the server. Never claims anything."""
-    config_dir = _config_dir(ctx)
-    loaded_config = _load_config_or_exit(config_dir)
-    _check_app_store_or_exit(config_dir)
-    fastapi_app = _build_app_or_exit(loaded_config, config_dir)
+    # Named because the environment chooses it, invisibly.
+    typer.echo(f"note: using config directory {config_dir()}.", err=True)
+    loaded_config = _load_config_or_exit()
+    _check_app_store_or_exit()
+    fastapi_app = _build_app_or_exit(loaded_config)
 
     install_access_log_redaction(
         logger_name="uvicorn.access",

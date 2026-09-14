@@ -54,10 +54,8 @@ codebase than the proxying does.
 
 ## On-disk state
 
-Three files, plus a lock sidecar per store, all in the directory the
-top-level `--config-dir` option selects (or `SIMPLEFIN_AGGREGATOR_CONFIG_DIR`
-if the flag is absent), defaulting to
-`platformdirs.user_config_dir("simplefin-aggregator")`:
+Three files, plus a lock sidecar per store, all in the directory
+`config_dir()` (`config.py`) resolves.
 
 | File | Written by | Holds |
 |---|---|---|
@@ -407,15 +405,16 @@ codebase:
 
 ## Request/command flows
 
-### `[--config-dir DIR] serve`
+### `serve`
 
 ```text
 cli.serve
-  -> _load_config_or_exit(config_path(dir))   # load_config, or print+exit 1
-  -> _check_app_store_or_exit(dir)            # store parses, directory writable
+  -> note naming the config directory -> stderr
+  -> _load_config_or_exit()                   # load_config, or print+exit 1
+  -> _check_app_store_or_exit()               # store parses, directory writable
                                               #   empty store -> warn, not fail
-  -> load_access_urls(provider_creds_path(dir))
-  -> create_app(config, access_urls, app_tokens_path(dir))
+  -> load_access_urls(provider_creds_path())
+  -> create_app(config, access_urls, app_tokens_path())
                                               # validates every stored access URL, see below
   -> install_access_log_redaction(...)        # generic filter, told about CLAIM_PATH_PREFIX
   -> uvicorn.run(app, host, port)
@@ -445,11 +444,11 @@ directory it cannot write would lose every claim. An empty store is a warning
 rather than a failure: it is the legitimate state between installing the server
 and issuing the first app its token.
 
-### CLI `[--config-dir DIR] claim [--provider KEY]` (claiming from a *real* provider)
+### CLI `claim [--provider KEY]` (claiming from a *real* provider)
 
 ```text
 cli.claim
-  -> _load_config_or_exit(...)                # claim needs a fully valid config, like serve
+  -> _load_config_or_exit()                  # claim needs a fully valid config, like serve
   -> load_access_urls(...) + check_can_save(...)   # BEFORE the token is spent
   -> _resolve_provider(config.provider_entries(), provider)
        --provider given -> _check_key + find_provider    # named, so exact; never fuzzy
@@ -461,6 +460,7 @@ cli.claim
        - non-200  -> status only, never the body (3xx lands here too)
   -> validate_access_url(entry.root, response.text.strip(), ...)
   -> save_access_url(store, entry.key, access_url)
+  -> note naming the store path -> stderr
   -> _probe_access_url(access_url): GET /accounts?balances-only=1, one attempt
        "Checking that the credentials work..." on stderr, then:
        success    -> "Credentials work."
@@ -502,13 +502,14 @@ used elsewhere in this codebase.
 ### CLI `app new` / `regen` / `revoke` (obtaining/revoking *this aggregator's* tokens)
 
 ```text
-cli.app_new(ctx, key)
-  -> _load_config_or_exit(...)                  # for base_url
+cli.app_new(key)
+  -> _load_config_or_exit()                     # for base_url
   -> _check_key(key)                            # rejected keys are never named back
-  -> _writable_store_or_exit(config_dir)        # directory writable, and warn if shared
+  -> _writable_store_or_exit()                  # directory writable, and warn if shared
   -> update_app_tokens(store):                  # one locked read-modify-write
        key already present -> exit 1, naming `app regen`, store untouched
        else -> new_app_token() -> (secret, UnclaimedAppToken)
+  -> note naming the store path -> stderr
   -> build_setup_token(base_url, secret) -> stdout, alone
   -> "shown once" note -> stderr
 ```

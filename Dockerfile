@@ -16,7 +16,7 @@ COPY README.md ./
 RUN uv sync --frozen --no-dev
 
 ENV UV_CACHE_DIR=/tmp/uv-cache
-ENV SIMPLEFIN_AGGREGATOR_CONFIG_DIR=/config
+ENV SIMPLEFIN_AGGREGATOR_DIR=/config
 
 # Loopback only. Do not publish this port to anything but 127.0.0.1 on the host.
 EXPOSE 5026

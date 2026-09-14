@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr
 
+from simplefin_aggregator.config import DIR_ENV_VAR
 from simplefin_aggregator.provider_access_urls import (
     PROVIDER_CREDS_FILENAME,
     load_access_urls,
@@ -40,7 +41,11 @@ def test_provider_creds_path_uses_the_given_config_dir(tmp_path: Path) -> None:
     assert provider_creds_path(tmp_path) == tmp_path / PROVIDER_CREDS_FILENAME
 
 
-def test_provider_creds_path_defaults_to_the_platform_config_dir() -> None:
+def test_provider_creds_path_defaults_to_the_platform_config_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(DIR_ENV_VAR, raising=False)
+
     path = provider_creds_path()
 
     assert path.name == PROVIDER_CREDS_FILENAME

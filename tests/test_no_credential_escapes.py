@@ -55,7 +55,9 @@ def test_a_full_flow_puts_no_credential_anywhere_a_person_would_see(
 
     with caplog.at_level(logging.DEBUG):
         issued = runner.invoke(
-            cli.app, ["--config-dir", str(tmp_path), "app", "new", "--key", "actual-budget"]
+            cli.app,
+            ["app", "new", "--key", "actual-budget"],
+            env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)},
         )
         setup_token = issued.stdout.strip()
         claim_url = base64.b64decode(setup_token, validate=True).decode("ascii")
@@ -75,7 +77,9 @@ def test_a_full_flow_puts_no_credential_anywhere_a_person_would_see(
             )
             accounts = client.get("/simplefin/accounts", auth=(username, password))
 
-        listed = runner.invoke(cli.app, ["--config-dir", str(tmp_path), "app", "list"])
+        listed = runner.invoke(
+            cli.app, ["app", "list"], env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)}
+        )
 
     assert claimed.status_code == HTTPStatus.OK
     assert accounts.status_code == HTTPStatus.OK
@@ -175,7 +179,7 @@ key = "second-bank"
 
     monkeypatch.setattr(cli.uvicorn, "run", fake_run)  # pyright: ignore[reportPrivateLocalImportUsage]
 
-    result = runner.invoke(cli.app, ["--config-dir", str(tmp_path), "serve"])
+    result = runner.invoke(cli.app, ["serve"], env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)})
 
     assert result.exit_code == 1
     # Both providers are named, which is the report this test exists to pin.

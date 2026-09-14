@@ -19,6 +19,8 @@ from .support import make_claimed_app
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from typer.testing import Result
+
 
 runner = CliRunner()
 
@@ -66,10 +68,10 @@ def _claim(tmp_path: Path, access_url: str = ACCESS_URL) -> None:
     save_access_url(provider_creds_path(tmp_path), "my-bank", SecretStr(access_url))
 
 
-def _serve_args(tmp_path: Path) -> list[str]:
-    # --config-dir is never omitted in tests: without it serve would read the
-    # developer's own config and credentials.
-    return ["--config-dir", str(tmp_path), "serve"]
+def _run_serve(tmp_path: Path) -> Result:
+    # SIMPLEFIN_AGGREGATOR_DIR is never omitted in tests: without it serve
+    # would read the developer's own config and credentials.
+    return runner.invoke(cli.app, ["serve"], env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)})
 
 
 def _record_start(monkeypatch: pytest.MonkeyPatch, started: list[object]) -> None:
@@ -95,12 +97,30 @@ def test_serve_runs_uvicorn_with_configured_bind_address(
 
     _claim(tmp_path)
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path))
+    result = _run_serve(tmp_path)
 
     assert result.exit_code == 0
     assert len(calls) == 1
     assert calls[0]["host"] == "127.0.0.2"
     assert calls[0]["port"] == 9998  # noqa: PLR2004
+
+
+def test_serve_names_the_config_directory_at_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The directory is invisible state, so `serve` says which one it picked."""
+    _ = _write_config(tmp_path, VALID_TOML)
+    _claim(tmp_path)
+
+    def fake_run(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(cli.uvicorn, "run", fake_run)  # pyright: ignore[reportPrivateLocalImportUsage]
+
+    result = _run_serve(tmp_path)
+
+    assert result.exit_code == 0
+    assert str(tmp_path) in result.stderr
 
 
 def test_serve_wires_up_real_claim_token_redaction(
@@ -116,7 +136,7 @@ def test_serve_wires_up_real_claim_token_redaction(
 
     _claim(tmp_path)
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path))
+    result = _run_serve(tmp_path)
     assert result.exit_code == 0
 
     logger = logging.getLogger("uvicorn.access")
@@ -146,7 +166,7 @@ def test_serve_fails_without_starting_uvicorn_on_invalid_config(
 
     monkeypatch.setattr(cli.uvicorn, "run", fake_run)  # pyright: ignore[reportPrivateLocalImportUsage]
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path))
+    result = _run_serve(tmp_path)
 
     assert result.exit_code == 1
     assert calls == []
@@ -170,7 +190,7 @@ def test_serve_fails_when_the_provider_has_not_been_claimed(
     _ = _write_config(tmp_path, VALID_TOML)
     calls = _fake_uvicorn(monkeypatch)
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path))
+    result = _run_serve(tmp_path)
 
     assert result.exit_code == 1
     assert calls == []
@@ -185,7 +205,7 @@ def test_serve_fails_when_one_of_several_providers_has_not_been_claimed(
     _claim(tmp_path)
     calls = _fake_uvicorn(monkeypatch)
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path))
+    result = _run_serve(tmp_path)
 
     assert result.exit_code == 1
     assert calls == [], "the claimed provider gets no server of its own"
@@ -204,7 +224,7 @@ def test_serve_reports_every_unresolved_provider_at_once(
     _claim(tmp_path)  # claimed for 'my-bank', whose root just moved
     calls = _fake_uvicorn(monkeypatch)
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path))
+    result = _run_serve(tmp_path)
 
     assert result.exit_code == 1
     assert calls == []
@@ -225,7 +245,7 @@ def test_serve_fails_when_the_stored_access_url_no_longer_matches_the_root(
     _claim(tmp_path)
     calls = _fake_uvicorn(monkeypatch)
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path))
+    result = _run_serve(tmp_path)
 
     assert result.exit_code == 1
     assert calls == []
@@ -240,7 +260,7 @@ def test_serve_fails_on_a_malformed_access_url_store(
     _ = provider_creds_path(tmp_path).write_text("{not json")
     calls = _fake_uvicorn(monkeypatch)
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path))
+    result = _run_serve(tmp_path)
 
     assert result.exit_code == 1
     assert calls == []
@@ -260,7 +280,7 @@ def test_serve_starts_with_no_apps_yet_and_says_so(
     started: list[object] = []
     _record_start(monkeypatch, started)
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path))
+    result = _run_serve(tmp_path)
 
     assert result.exit_code == 0
     assert len(started) == 1
@@ -277,7 +297,7 @@ def test_serve_refuses_to_start_on_a_malformed_app_store(
     started: list[object] = []
     _record_start(monkeypatch, started)
 
-    result = runner.invoke(cli.app, _serve_args(tmp_path))
+    result = _run_serve(tmp_path)
 
     assert result.exit_code == 1
     assert started == []
@@ -300,7 +320,7 @@ def test_serve_refuses_to_start_when_it_could_not_record_a_claim(
     tmp_path.chmod(0o500)
 
     try:
-        result = runner.invoke(cli.app, _serve_args(tmp_path))
+        result = _run_serve(tmp_path)
     finally:
         tmp_path.chmod(0o700)
 

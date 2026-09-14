@@ -46,7 +46,9 @@ def _write_config(tmp_path: Path) -> None:
 
 
 def _run(tmp_path: Path, *arguments: str) -> Result:
-    return runner.invoke(cli.app, ["--config-dir", str(tmp_path), "app", *arguments])
+    return runner.invoke(
+        cli.app, ["app", *arguments], env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)}
+    )
 
 
 def _new(tmp_path: Path, key: str = "actual-budget") -> Result:
@@ -136,6 +138,15 @@ def test_the_note_that_the_token_is_shown_once_goes_to_stderr(tmp_path: Path) ->
 
     assert "once" in result.stderr
     assert "regen" in result.stderr
+
+
+def test_new_names_the_store_it_wrote(tmp_path: Path) -> None:
+    """The directory is invisible state, so `app new` says where it landed."""
+    _write_config(tmp_path)
+
+    result = _new(tmp_path)
+
+    assert str(app_tokens_path(tmp_path)) in result.stderr
 
 
 def test_new_refuses_a_key_that_already_exists_and_says_how_to_reissue(tmp_path: Path) -> None:
@@ -246,6 +257,27 @@ def test_revoke_removes_a_claimed_app_as_readily_as_an_unclaimed_one(tmp_path: P
     assert load_app_tokens(app_tokens_path(tmp_path)) == {}
 
 
+def test_revoke_does_not_name_the_directory(tmp_path: Path) -> None:
+    """Unlike `app new`/`app regen`, `app revoke` says only what it already said."""
+    _write_config(tmp_path)
+    _ = _new(tmp_path)
+
+    result = _run(tmp_path, "revoke", "--key", "actual-budget")
+
+    assert str(tmp_path) not in result.stderr
+
+
+def test_list_does_not_name_the_directory(tmp_path: Path) -> None:
+    """Unlike `app new`/`app regen`, `app list` says only what it already said."""
+    _write_config(tmp_path)
+    _ = _new(tmp_path)
+
+    result = _run(tmp_path, "list")
+
+    assert str(tmp_path) not in result.stdout
+    assert str(tmp_path) not in result.stderr
+
+
 def test_revoking_an_unknown_key_fails_rather_than_reporting_success(tmp_path: Path) -> None:
     _write_config(tmp_path)
     _ = _new(tmp_path)
@@ -277,6 +309,16 @@ def test_regen_prints_a_setup_token_the_new_record_recognises(tmp_path: Path) ->
     result = _run(tmp_path, "regen", "--key", "actual-budget")
 
     assert matches(_claim_secret(result), _unclaimed(tmp_path).claim_token_sha256)
+
+
+def test_regen_names_the_store_it_wrote(tmp_path: Path) -> None:
+    """The directory is invisible state, so `app regen` says where it landed."""
+    _write_config(tmp_path)
+    _ = _new(tmp_path)
+
+    result = _run(tmp_path, "regen", "--key", "actual-budget")
+
+    assert str(app_tokens_path(tmp_path)) in result.stderr
 
 
 def test_regen_discards_what_the_app_held_before(tmp_path: Path) -> None:

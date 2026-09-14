@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, NamedTuple
 
 from pydantic import AwareDatetime, BaseModel, Field, SecretStr
 
-from .config import default_config_dir
+from .config import config_dir
 from .provider_registry import KEY_PATTERN
 from .state_file import load_state_file, update_state_file
 
@@ -140,10 +140,9 @@ def claim_app_token(token: UnclaimedAppToken) -> tuple[ClientCredentials, Claime
     )
 
 
-def app_tokens_path(config_dir: Path | None = None) -> Path:
-    """Where the store lives: in `config_dir`, or the platform default."""
-    directory = config_dir if config_dir is not None else default_config_dir()
-    return directory / APP_TOKENS_FILENAME
+def app_tokens_path(directory: Path | None = None) -> Path:
+    """Where the store lives: in `directory`, or where `config_dir()` resolves."""
+    return (directory if directory is not None else config_dir()) / APP_TOKENS_FILENAME
 
 
 def load_app_tokens(path: Path, *, warn: bool = True) -> dict[str, AppTokenRecord]:

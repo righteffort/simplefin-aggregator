@@ -21,6 +21,7 @@ from simplefin_aggregator.app_tokens import (
     new_app_token,
     update_app_tokens,
 )
+from simplefin_aggregator.config import DIR_ENV_VAR
 from simplefin_aggregator.state_file import StateFileError
 
 
@@ -47,7 +48,11 @@ def test_app_tokens_path_uses_the_given_config_dir(tmp_path: Path) -> None:
     assert app_tokens_path(tmp_path) == tmp_path / APP_TOKENS_FILENAME
 
 
-def test_app_tokens_path_defaults_to_the_platform_config_dir() -> None:
+def test_app_tokens_path_defaults_to_the_platform_config_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(DIR_ENV_VAR, raising=False)
+
     path = app_tokens_path()
 
     assert path.name == APP_TOKENS_FILENAME
