@@ -58,7 +58,7 @@ def test_a_full_flow_puts_no_credential_anywhere_a_person_would_see(
     with caplog.at_level(logging.DEBUG):
         issued = runner.invoke(
             cli.app,
-            ["app", "new", "--key", "actual-budget"],
+            ["app", "new", "actual-budget"],
             env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)},
         )
         setup_token = issued.stdout.strip()

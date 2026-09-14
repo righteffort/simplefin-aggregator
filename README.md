@@ -155,12 +155,12 @@ of them. This has these consequences:
 For each of your providers: Get a one-time-use setup token, then:
 
 ```sh
-uv run simplefin-aggregator claim --provider <key>
+uv run simplefin-aggregator claim <key>
 ```
 
 `claim` prompts for the setup token, uses it to obtain an access URL, and
 stores that in `provider_creds.json` in the config directory. It asks which
-provider the token came from unless `--provider <key>` tells it. Naming the
+provider the token came from unless `<key>` tells it. Naming the
 wrong provider is an error rather than a guess: the access URL a provider
 returns has to sit under the root that key names.
 
@@ -172,7 +172,7 @@ The prompt hides what you type. To run `claim` without a terminal, redirect a
 file instead:
 
 ```sh
-uv run simplefin-aggregator claim --provider <key> < token-file
+uv run simplefin-aggregator claim <key> < token-file
 ```
 
 **`provider_creds.json` cannot be regenerated.** A setup token is
@@ -186,17 +186,17 @@ new key.
 ### 3. Issue your client app a setup token
 
 ```sh
-uv run simplefin-aggregator app new --key actual-budget
+uv run simplefin-aggregator app new actual-budget
 ```
 
-`--key` names the app in `app list` and `app revoke`, and must match
+The key names the app in `app list` and `app revoke`, and must match
 `[a-z0-9-]+`. The command prints a base64 setup token on stdout and nothing
 else — the same shape a real SimpleFIN provider hands out — so `$(...)`
 captures it cleanly.
 
 **It is shown once.** The aggregator stores a SHA-256 digest of it and nothing
 else, so it cannot be printed again; if you lose it before the app claims it,
-run `app regen --key actual-budget` for a fresh one.
+run `app regen actual-budget` for a fresh one.
 
 ### 4. Run the server
 
@@ -224,8 +224,8 @@ could tell the two apart.
 
 ```sh
 uv run simplefin-aggregator app list
-uv run simplefin-aggregator app revoke --key <key>
-uv run simplefin-aggregator app regen  --key <key>
+uv run simplefin-aggregator app revoke <key>
+uv run simplefin-aggregator app regen  <key>
 ```
 
 `app list` shows each app's key, status and timestamps. It cannot show you a

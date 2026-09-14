@@ -211,12 +211,10 @@ def run(demo_setup_tokens: tuple[str, str], config_dir: Path) -> None:
     for key, demo_setup_token in zip((PREFIXED_KEY, BLANK_KEY), demo_setup_tokens, strict=True):
         print(f"==> Claiming a SimpleFIN demo setup token as {key}")
         # On stdin, which `claim` prompts for, rather than as an argument.
-        _ = aggregator(
-            "claim", "--provider", key, config_dir=config_dir, stdin=f"{demo_setup_token}\n"
-        )
+        _ = aggregator("claim", key, config_dir=config_dir, stdin=f"{demo_setup_token}\n")
 
     print("==> Issuing a setup token for this run")
-    setup_token = aggregator("app", "new", "--key", APP_KEY, config_dir=config_dir)
+    setup_token = aggregator("app", "new", APP_KEY, config_dir=config_dir)
     claim_url = base64.b64decode(setup_token).decode("ascii")
 
     with serving(config_dir):
@@ -273,7 +271,7 @@ def run(demo_setup_tokens: tuple[str, str], config_dir: Path) -> None:
         )
 
         print("==> Revoking the app, then asking again (expect 403, with no restart)")
-        _ = aggregator("app", "revoke", "--key", APP_KEY, config_dir=config_dir)
+        _ = aggregator("app", "revoke", APP_KEY, config_dir=config_dir)
         _ = expect(
             request(f"{BASE_URL}/simplefin/accounts", auth=auth),
             HTTPStatus.FORBIDDEN,

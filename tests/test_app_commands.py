@@ -54,7 +54,7 @@ def _run(tmp_path: Path, *arguments: str) -> Result:
 
 
 def _new(tmp_path: Path, key: str = "actual-budget") -> Result:
-    return _run(tmp_path, "new", "--key", key)
+    return _run(tmp_path, "new", key)
 
 
 def _claim_secret(result: Result) -> str:
@@ -242,7 +242,7 @@ def test_revoke_removes_the_app(tmp_path: Path) -> None:
     _ = _new(tmp_path)
     _ = _new(tmp_path, key="beancount")
 
-    result = _run(tmp_path, "revoke", "--key", "actual-budget")
+    result = _run(tmp_path, "revoke", "actual-budget")
 
     assert result.exit_code == 0
     assert set(load_app_tokens(app_tokens_path(tmp_path))) == {"beancount"}
@@ -253,7 +253,7 @@ def test_revoke_removes_a_claimed_app_as_readily_as_an_unclaimed_one(tmp_path: P
     _ = _new(tmp_path)
     _ = _claim_in_the_store(tmp_path)
 
-    result = _run(tmp_path, "revoke", "--key", "actual-budget")
+    result = _run(tmp_path, "revoke", "actual-budget")
 
     assert result.exit_code == 0
     assert load_app_tokens(app_tokens_path(tmp_path)) == {}
@@ -264,7 +264,7 @@ def test_revoke_does_not_name_the_directory(tmp_path: Path) -> None:
     _write_config(tmp_path)
     _ = _new(tmp_path)
 
-    result = _run(tmp_path, "revoke", "--key", "actual-budget")
+    result = _run(tmp_path, "revoke", "actual-budget")
 
     assert str(tmp_path) not in result.stderr
 
@@ -285,7 +285,7 @@ def test_revoking_an_unknown_key_fails_rather_than_reporting_success(tmp_path: P
     _ = _new(tmp_path)
     before = app_tokens_path(tmp_path).read_bytes()
 
-    result = _run(tmp_path, "revoke", "--key", "beancount")
+    result = _run(tmp_path, "revoke", "beancount")
 
     assert result.exit_code == 1
     assert app_tokens_path(tmp_path).read_bytes() == before
@@ -296,7 +296,7 @@ def test_regen_returns_a_claimed_app_to_unclaimed(tmp_path: Path) -> None:
     _ = _new(tmp_path)
     _ = _claim_in_the_store(tmp_path)
 
-    result = _run(tmp_path, "regen", "--key", "actual-budget")
+    result = _run(tmp_path, "regen", "actual-budget")
 
     assert result.exit_code == 0
     record = _unclaimed(tmp_path)
@@ -308,7 +308,7 @@ def test_regen_prints_a_setup_token_the_new_record_recognises(tmp_path: Path) ->
     _ = _new(tmp_path)
     _ = _claim_in_the_store(tmp_path)
 
-    result = _run(tmp_path, "regen", "--key", "actual-budget")
+    result = _run(tmp_path, "regen", "actual-budget")
 
     assert matches(_claim_secret(result), _unclaimed(tmp_path).claim_token_sha256)
 
@@ -318,7 +318,7 @@ def test_regen_names_the_store_it_wrote(tmp_path: Path) -> None:
     _write_config(tmp_path)
     _ = _new(tmp_path)
 
-    result = _run(tmp_path, "regen", "--key", "actual-budget")
+    result = _run(tmp_path, "regen", "actual-budget")
 
     assert str(app_tokens_path(tmp_path)) in result.stderr
 
@@ -331,7 +331,7 @@ def test_regen_discards_what_the_app_held_before(tmp_path: Path) -> None:
     before = load_app_tokens(app_tokens_path(tmp_path))["actual-budget"]
     assert isinstance(before, ClaimedAppToken)
 
-    _ = _run(tmp_path, "regen", "--key", "actual-budget")
+    _ = _run(tmp_path, "regen", "actual-budget")
 
     written = app_tokens_path(tmp_path).read_text()
     assert before.username_sha256 not in written
@@ -342,7 +342,7 @@ def test_regen_discards_what_the_app_held_before(tmp_path: Path) -> None:
 def test_regen_of_an_unknown_key_fails_and_issues_nothing(tmp_path: Path) -> None:
     _write_config(tmp_path)
 
-    result = _run(tmp_path, "regen", "--key", "actual-budget")
+    result = _run(tmp_path, "regen", "actual-budget")
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -390,7 +390,7 @@ def test_a_base_url_no_token_could_carry_is_refused_before_a_record_exists(tmp_p
 
 
 def test_a_key_that_is_a_pasted_secret_does_not_come_back_on_stderr(tmp_path: Path) -> None:
-    """A mistyped `--key` is most often a setup token, and the constraint rejects it.
+    """A mistyped key is most often a setup token, and the constraint rejects it.
 
     Repeating the value would put a secret on stderr in order to tell the user
     what they had just typed.
@@ -398,11 +398,7 @@ def test_a_key_that_is_a_pasted_secret_does_not_come_back_on_stderr(tmp_path: Pa
     _write_config(tmp_path)
     pasted = base64.b64encode(f"{BASE_URL}/simplefin/claim/s3cret-marker".encode()).decode()
 
-    for arguments in (
-        ("new", "--key", pasted),
-        ("revoke", "--key", pasted),
-        ("regen", "--key", pasted),
-    ):
+    for arguments in (("new", pasted), ("revoke", pasted), ("regen", pasted)):
         result = _run(tmp_path, *arguments)
         assert result.exit_code == 1, arguments
         assert pasted not in result.stderr, arguments
@@ -411,9 +407,9 @@ def test_a_key_that_is_a_pasted_secret_does_not_come_back_on_stderr(tmp_path: Pa
 
 
 SHARED_DIRECTORY_COMMANDS = {
-    "new": ("new", "--key", "second"),
-    "revoke": ("revoke", "--key", "actual-budget"),
-    "regen": ("regen", "--key", "actual-budget"),
+    "new": ("new", "second"),
+    "revoke": ("revoke", "actual-budget"),
+    "regen": ("regen", "actual-budget"),
 }
 
 
@@ -448,10 +444,10 @@ def test_the_commands_report_a_malformed_store_rather_than_replacing_it(tmp_path
     _ = path.write_text("{not json")
 
     for arguments in (
-        ("new", "--key", "actual-budget"),
+        ("new", "actual-budget"),
         ("list",),
-        ("revoke", "--key", "actual-budget"),
-        ("regen", "--key", "actual-budget"),
+        ("revoke", "actual-budget"),
+        ("regen", "actual-budget"),
     ):
         result = _run(tmp_path, *arguments)
         assert result.exit_code == 1, arguments

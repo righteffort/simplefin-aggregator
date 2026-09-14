@@ -101,7 +101,7 @@ It does not run on the `.lock` sidecars, which hold nothing.
 The provider store is keyed by provider key because that is the one identifier
 `config.toml` and the store share; neither file has to name the other — which
 is why two accounts at one provider is a non-goal. The app token store is keyed
-by the `--key` its command was given, constrained to `[a-z0-9-]+` at the
+by the key its command was given, constrained to `[a-z0-9-]+` at the
 command and again in the model, so what `app list` prints is what this
 application could have written.
 
@@ -446,14 +446,14 @@ directory it cannot write would lose every claim. An empty store is a warning
 rather than a failure: it is the legitimate state between installing the server
 and issuing the first app its token.
 
-### CLI `claim [--provider KEY]` (claiming from a *real* provider)
+### CLI `claim [provider]` (claiming from a *real* provider)
 
 ```text
 cli.claim
   -> _load_config_or_exit()                  # claim needs a fully valid config, like serve
   -> load_access_urls(...) + check_can_save(...)   # BEFORE the token is spent
   -> _resolve_provider(config.provider_entries(), provider)
-       --provider given -> _check_key + find_provider    # named, so exact; never fuzzy
+       provider given   -> _check_key + find_provider    # named, so exact; never fuzzy
        otherwise        -> numbered menu; no default, no free-text host
   -> prompt for the token, hidden if stdin is a real terminal
   -> _decode_setup_token  -> validate_claim_url(entry.root, ...)   # BEFORE any network call
@@ -474,10 +474,10 @@ One property and four orderings in there are load-bearing.
 
 The property: **the provider is named or chosen, never defaulted.** Which root
 the token is matched against is the whole of the phishing defense, so it is the
-user's deliberate answer either way — `--provider` on the command line is as
+user's deliberate answer either way — naming it on the command line is as
 deliberate as picking from the menu, and an unknown key is an error rather than
-a guess. A `--provider` failing the key pattern is rejected without being
-echoed, for the reason `--key` is: a mistyped one is most often a pasted setup
+a guess. A provider key failing the key pattern is rejected without being
+echoed, for the reason an app key is: a mistyped one is most often a pasted setup
 token.
 
 The orderings:
@@ -520,7 +520,7 @@ Three orderings here are load-bearing. The duplicate check is *inside* the
 lock, or it answers from a version another writer is already replacing. The
 token is printed *after* the store is written, because a token this aggregator
 has no record of looks to the user like a working setup that never syncs. And
-a rejected `--key` is not echoed, because a mistyped one is most often a
+a rejected key is not echoed, because a mistyped one is most often a
 pasted setup token and base64 is exactly what `[a-z0-9-]+` rejects.
 
 `app regen` is the same flow over an existing record. `app revoke` deletes the
@@ -751,7 +751,7 @@ asked for it, so the gap is left open.
 
 A sixth rule has no single home because it applies at every command boundary:
 **a value the user typed is not safe to echo just because they typed it.** A
-mistyped `--key` is most often a pasted setup token, so `_check_key` rejects it
+mistyped key is most often a pasted setup token, so `_check_key` rejects it
 without naming it, and `claim` declines to quote a setup token it could not
 decode. Repeating the value would put a secret on stderr in order to tell the
 user something they already know.

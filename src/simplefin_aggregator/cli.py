@@ -115,7 +115,7 @@ def _resolve_provider(entries: Sequence[ProviderEntry], key: str | None) -> Prov
     if key is None:
         return _select_provider(entries)
 
-    _check_key(key, "--provider")
+    _check_key(key, "provider")
     try:
         return find_provider(entries, key)
     except ProviderRegistryError as exc:
@@ -226,9 +226,7 @@ def _probe_access_url(access_url: NormalizedUrl) -> str | None:
 
 
 @app.command()
-def claim(
-    provider: Annotated[str | None, typer.Option("--provider", help="Provider key.")] = None,
-) -> None:
+def claim(provider: Annotated[str | None, typer.Argument(help="Provider key.")] = None) -> None:
     """Claim a one-time SimpleFIN setup token and store the access URL it returns."""
     loaded_config = _load_config_or_exit()
     store_path = provider_creds_path()
@@ -318,7 +316,7 @@ def _writable_store_or_exit() -> Path:
     return store_path
 
 
-def _check_key(key: str, option: str = "--key") -> None:
+def _check_key(key: str, argument: str = "key") -> None:
     """Reject a key the stores cannot be keyed by, without repeating it back.
 
     A mistyped key is most often a pasted setup token, which is a secret and
@@ -328,7 +326,7 @@ def _check_key(key: str, option: str = "--key") -> None:
     matched.
     """
     if not KEY_PATTERN.fullmatch(key):
-        _fail(f"error: {option} must match {KEY_PATTERN.pattern}")
+        _fail(f"error: {argument} must match {KEY_PATTERN.pattern}")
 
 
 def _print_setup_token(base_url: str, claim_secret: str, key: str, store_path: Path) -> None:
@@ -337,7 +335,7 @@ def _print_setup_token(base_url: str, claim_secret: str, key: str, store_path: P
     typer.echo(build_setup_token(base_url, claim_secret))
     shown_once = (
         f"note: this setup token is shown once and is not stored. If it is lost before "
-        f"{key!r} claims it, run `app regen --key {key}` for a new one."
+        f"{key!r} claims it, run `app regen {key}` for a new one."
     )
     typer.echo(shown_once, err=True)
 
@@ -345,7 +343,7 @@ def _print_setup_token(base_url: str, claim_secret: str, key: str, store_path: P
 @app_commands.command("new")
 def app_new(
     key: Annotated[
-        str, typer.Option("--key", help=escape(f"The app's key, matching {KEY_PATTERN.pattern}."))
+        str, typer.Argument(help=escape(f"The app's key, matching {KEY_PATTERN.pattern}."))
     ],
 ) -> None:
     """Issue a setup token for a client app that does not have one yet."""
@@ -361,7 +359,7 @@ def app_new(
             if key in apps:
                 _fail(
                     f"error: an app with key {key!r} already exists.",
-                    f"To replace its credentials with a fresh setup token: app regen --key {key}",
+                    f"To replace its credentials with a fresh setup token: app regen {key}",
                 )
             claim_secret, apps[key] = new_app_token()
     except StateFileError as exc:
@@ -385,7 +383,7 @@ def app_list() -> None:
         _fail(f"error: {exc}")
 
     if not apps:
-        typer.echo("No apps yet. Create one with `app new --key <key>`.", err=True)
+        typer.echo("No apps yet. Create one with `app new <key>`.", err=True)
         return
 
     header = ("KEY", "STATUS", "CREATED", "CLAIMED")
@@ -405,7 +403,7 @@ def app_list() -> None:
 
 
 @app_commands.command("revoke")
-def app_revoke(key: Annotated[str, typer.Option("--key", help="The app's key.")]) -> None:
+def app_revoke(key: Annotated[str, typer.Argument(help="The app's key.")]) -> None:
     """Forget a client app, so its credentials stop working and its token cannot be claimed."""
     _check_key(key)
     store_path = _writable_store_or_exit()
@@ -422,7 +420,7 @@ def app_revoke(key: Annotated[str, typer.Option("--key", help="The app's key.")]
 
 
 @app_commands.command("regen")
-def app_regen(key: Annotated[str, typer.Option("--key", help="The app's key.")]) -> None:
+def app_regen(key: Annotated[str, typer.Argument(help="The app's key.")]) -> None:
     """Issue a client app a fresh setup token, revoking whatever it holds now."""
     loaded_config = _load_config_or_exit()
     _check_key(key)
@@ -469,7 +467,7 @@ def _check_app_store_or_exit() -> None:
         # installing the server and issuing the first app its token.
         no_apps = (
             "warning: no client apps yet, so every request will be refused. "
-            "Issue one with `app new --key <key>`."
+            "Issue one with `app new <key>`."
         )
         typer.echo(no_apps, err=True)
 

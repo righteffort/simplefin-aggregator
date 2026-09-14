@@ -131,11 +131,11 @@ def _run_claim(
 def _run_claim_with_provider(
     tmp_path: Path, provider: str, token: str = SETUP_TOKEN, *, config: str = CONFIG_TOML
 ) -> Result:
-    """Invoke `claim --provider`, which skips the menu, then feed it the token."""
+    """Invoke `claim <provider>`, which skips the menu, then feed it the token."""
     _ = _write_config(tmp_path, config)
     return runner.invoke(
         cli.app,
-        ["claim", "--provider", provider],
+        ["claim", provider],
         input=f"{token}\n",
         env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)},
     )
@@ -569,7 +569,7 @@ def test_probe_client_bounds_every_wait() -> None:
 
 
 def test_naming_the_provider_skips_the_menu(tmp_path: Path, claim_succeeds: list[str]) -> None:
-    """`--provider` is as deliberate an answer as choosing from the menu."""
+    """Naming the provider is as deliberate an answer as choosing from the menu."""
     result = _run_claim_with_provider(tmp_path, PROVIDER_KEY)
 
     assert result.exit_code == 0
@@ -594,7 +594,7 @@ def test_a_provider_no_entry_defines_is_refused_before_the_token_is_spent(
 def test_a_provider_key_that_is_a_pasted_secret_does_not_come_back_on_stderr(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
-    """A mistyped `--provider` is as likely to be a pasted setup token as `--key` is."""
+    """A mistyped provider key is as likely to be a pasted setup token as an app key is."""
     result = _run_claim_with_provider(tmp_path, SETUP_TOKEN)
 
     assert result.exit_code == 1
