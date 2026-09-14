@@ -704,13 +704,15 @@ before touching anything credential-adjacent:
    catch names those two types rather than `ValueError`, so an unexpected one
    stays a traceback instead of being reported as the operator's config.
 4. **uvicorn's own access logger** — bypasses application-level logging
-   entirely. `access_log.py` + the `CLAIM_PATH_PREFIX`-based wiring in
-   `cli.py`/`app.py` exists because uvicorn was printing the raw setup token to
-   stdout on every `POST /simplefin/claim/{token}`, independent of anything the
-   app itself logs. If a future route ever embeds a credential in its path, it
-   needs the same treatment; if it only sends credentials via headers (like
-   Basic Auth today), it doesn't need any redaction since uvicorn's access log
-   never includes headers.
+   entirely. `access_log.py` (see its module docstring for why the filter
+   matches on path prefix alone, with no notion of HTTP method) + the
+   `CLAIM_PATH_PREFIX`-based wiring in `cli.py`/`app.py` exists because uvicorn
+   was printing the raw setup token to stdout on every request against
+   `/simplefin/claim/{token}`, independent of anything the app itself logs. If
+   a future route ever embeds a credential in its path, it needs the same
+   treatment; if it only sends credentials via headers (like Basic Auth
+   today), it doesn't need any redaction since uvicorn's access log never
+   includes headers.
 5. **The stored provider access URL**, the most sensitive value in the system.
    It reaches a message only as `NormalizedUrl.origin` or `origin_and_path`,
    never as the raw string — and the same rule covers the setup token, whose

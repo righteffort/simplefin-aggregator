@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from base64 import b64decode
 from contextlib import contextmanager
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from .support import (
     ProviderSpec,
+    echo_the_basic_auth_password,
     echoing_provider,
     install_provider_transport,
     make_access_urls,
@@ -477,19 +477,6 @@ def _loopback_provider() -> Generator[int]:
         server.server_close()
 
 
-def _echo_the_basic_auth_password(request_text: str) -> str:
-    """Compose a status line carrying back the password the request just sent.
-
-    The shortest way for a provider to put a credential where a rendered
-    exception would carry it.
-    """
-    credentials = "no-credentials-seen"
-    for line in request_text.split("\r\n"):
-        if line.lower().startswith("authorization: basic "):
-            credentials = b64decode(line.split(" ", 2)[2]).decode()
-    return f"NOT-HTTP {credentials}"
-
-
 def test_a_provider_cannot_get_its_credential_into_a_log_by_echoing_it(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -497,7 +484,7 @@ def test_a_provider_cannot_get_its_credential_into_a_log_by_echoing_it(
     password = "s3cret-provider-password"  # noqa: S105
     auth = make_claimed_app(tmp_path)
 
-    with echoing_provider(_echo_the_basic_auth_password) as (port, echoed):
+    with echoing_provider(echo_the_basic_auth_password) as (port, echoed):
         provider = ProviderSpec(
             root=f"http://127.0.0.1:{port}/simplefin",
             access_url=f"http://user:{password}@127.0.0.1:{port}/simplefin",

@@ -26,7 +26,7 @@ def _make_record(method: str, path: str, *, logger_name: str = LOGGER_NAME) -> l
 
 def test_redacts_a_matching_path() -> None:
     record = _make_record("POST", "/widgets/secret-widget-id")
-    redact = _RedactPathFilter("POST", "/widgets/", "/widgets/[REDACTED]")
+    redact = _RedactPathFilter("/widgets/", "/widgets/[REDACTED]")
 
     kept = redact.filter(record)
 
@@ -36,18 +36,19 @@ def test_redacts_a_matching_path() -> None:
     assert message == '127.0.0.1:12345 - "POST /widgets/[REDACTED] HTTP/1.1" 200'
 
 
-def test_does_not_redact_a_different_method() -> None:
-    record = _make_record("GET", "/widgets/secret-widget-id")
-    redact = _RedactPathFilter("POST", "/widgets/", "/widgets/[REDACTED]")
+def test_redacts_regardless_of_method() -> None:
+    for method in ("GET", "HEAD", "OPTIONS", "POST"):
+        record = _make_record(method, "/widgets/secret-widget-id")
+        redact = _RedactPathFilter("/widgets/", "/widgets/[REDACTED]")
 
-    _ = redact.filter(record)
+        _ = redact.filter(record)
 
-    assert "secret-widget-id" in record.getMessage()
+        assert "secret-widget-id" not in record.getMessage()
 
 
 def test_does_not_redact_a_different_path_prefix() -> None:
     record = _make_record("POST", "/gadgets/secret-gadget-id")
-    redact = _RedactPathFilter("POST", "/widgets/", "/widgets/[REDACTED]")
+    redact = _RedactPathFilter("/widgets/", "/widgets/[REDACTED]")
 
     _ = redact.filter(record)
 
@@ -60,10 +61,10 @@ def test_install_access_log_redaction_is_idempotent() -> None:
 
     try:
         install_access_log_redaction(
-            logger_name=LOGGER_NAME, method="POST", path_prefix="/widgets/", replacement="[X]"
+            logger_name=LOGGER_NAME, path_prefix="/widgets/", replacement="[X]"
         )
         install_access_log_redaction(
-            logger_name=LOGGER_NAME, method="POST", path_prefix="/widgets/", replacement="[X]"
+            logger_name=LOGGER_NAME, path_prefix="/widgets/", replacement="[X]"
         )
 
         installed = [f for f in logger.filters if isinstance(f, _RedactPathFilter)]
@@ -79,10 +80,10 @@ def test_install_access_log_redaction_allows_distinct_redactions() -> None:
 
     try:
         install_access_log_redaction(
-            logger_name=LOGGER_NAME, method="POST", path_prefix="/widgets/", replacement="[X]"
+            logger_name=LOGGER_NAME, path_prefix="/widgets/", replacement="[X]"
         )
         install_access_log_redaction(
-            logger_name=LOGGER_NAME, method="POST", path_prefix="/gadgets/", replacement="[Y]"
+            logger_name=LOGGER_NAME, path_prefix="/gadgets/", replacement="[Y]"
         )
 
         installed = [f for f in logger.filters if isinstance(f, _RedactPathFilter)]

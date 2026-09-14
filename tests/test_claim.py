@@ -14,7 +14,7 @@ from simplefin_aggregator.provider_access_urls import load_access_urls, provider
 from simplefin_aggregator.provider_registry import KNOWN_PROVIDERS
 from simplefin_aggregator.url_validation import parse_url
 
-from .support import echoing_provider
+from .support import echo_the_basic_auth_password, echoing_provider
 
 
 if TYPE_CHECKING:
@@ -640,20 +640,11 @@ def test_the_probe_does_not_run_when_the_claim_post_fails(
     assert probed == [], "no access URL was stored, so there is nothing to confirm"
 
 
-def _echo_the_probes_basic_auth_password(request_text: str) -> str:
-    """Compose a status line carrying back the password the probe just sent."""
-    credentials = "no-credentials-seen"
-    for line in request_text.split("\r\n"):
-        if line.lower().startswith("authorization: basic "):
-            credentials = base64.b64decode(line.split(" ", 2)[2]).decode()
-    return f"NOT-HTTP {credentials}"
-
-
 def test_a_provider_cannot_leak_its_credential_via_the_probes_malformed_reply(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Requirement: nothing a provider puts on the wire during the probe is rendered."""
-    with echoing_provider(_echo_the_probes_basic_auth_password) as (port, echoed):
+    with echoing_provider(echo_the_basic_auth_password) as (port, echoed):
         root = f"http://127.0.0.1:{port}/simplefin"
         config = CONFIG_TOML.replace(PROVIDER_ROOT, root)
         access_url = f"http://user:{PROVIDER_PASSWORD}@127.0.0.1:{port}/simplefin"

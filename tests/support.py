@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import socket
 import threading
+from base64 import b64decode
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, NamedTuple, cast
 
@@ -200,3 +201,18 @@ def echoing_provider(compose: Callable[[str], str]) -> Generator[tuple[int, list
     finally:
         listener.close()
         thread.join(timeout=1)
+
+
+def echo_the_basic_auth_password(request_text: str) -> str:
+    """Compose a status line carrying back the password the request just sent.
+
+    The shortest way for a provider to put a credential where a rendered
+    exception would carry it. Pass this to `echoing_provider` for both a
+    normal request and a probe request -- the credential leaks the same way
+    either time.
+    """
+    credentials = "no-credentials-seen"
+    for line in request_text.split("\r\n"):
+        if line.lower().startswith("authorization: basic "):
+            credentials = b64decode(line.split(" ", 2)[2]).decode()
+    return f"NOT-HTTP {credentials}"

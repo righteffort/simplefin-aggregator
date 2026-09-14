@@ -475,7 +475,6 @@ def serve(config_dir: _ConfigDirOption = None) -> None:
 
     install_access_log_redaction(
         logger_name="uvicorn.access",
-        method="POST",
         path_prefix=CLAIM_PATH_PREFIX,
         replacement=f"{CLAIM_PATH_PREFIX}[REDACTED]",
     )

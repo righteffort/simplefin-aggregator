@@ -7,14 +7,17 @@ from datetime import UTC, datetime
 
 
 class RequestCounter:
-    """Counts requests issued to each provider, resetting implicitly at UTC midnight."""
+    """Counts requests issued to each provider, resetting at UTC midnight."""
 
     def __init__(self) -> None:
-        self._counts: defaultdict[tuple[str, str], int] = defaultdict(int)
+        self._today: str = datetime.now(UTC).date().isoformat()
+        self._counts: defaultdict[str, int] = defaultdict(int)
 
     def record(self, provider_name: str) -> int:
         """Record one request to a provider and return the running count for today."""
         today = datetime.now(UTC).date().isoformat()
-        key = (provider_name, today)
-        self._counts[key] += 1
-        return self._counts[key]
+        if today != self._today:
+            self._today = today
+            self._counts.clear()
+        self._counts[provider_name] += 1
+        return self._counts[provider_name]
