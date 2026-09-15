@@ -118,8 +118,8 @@ def _resolve_provider(entries: Sequence[ProviderEntry], key: str | None) -> Prov
     try:
         return find_provider(entries, key)
     except ProviderRegistryError:
-        # Not the message, which names the key: see claim for why nothing typed
-        # on its command line is repeated.
+        # TODO(claude): review the comment; and can we move this closer to claim while still keeping private methods logically grouped, and within a group in the sequence that they are called?
+        # Do not use the error's message, which includes key. The comment below in claim explains why.
         known = ", ".join(entry.key for entry in entries)
         not_listed = (
             f"A provider that is not one of those needs a [[custom_providers]] entry in "
@@ -236,9 +236,12 @@ def claim(
     ctx: typer.Context, provider: Annotated[str | None, typer.Argument(help="Provider key.")] = None
 ) -> None:
     """Claim a one-time SimpleFIN setup token and store the access URL it returns."""
-    # Nothing typed on this command line is repeated in an error: it could
-    # plausibly be a setup token pasted there rather than at the prompt. So the
-    # parser, which would quote an extra argument, accepts it and this refuses it.
+    # TODO(claude): review the comment
+    # A user could plausibly include a setup token as an argument. To avoid echoing it:
+    #
+    # 1. If it is an extra arg, prevent typer echoing it in a default error message by
+    #    setting allow_extra_args and then failing here.
+    # 2. If it is the key argument, rely on _resolve_provider not to echo it.
     if ctx.args:
         _fail("error: claim takes at most one argument, the provider key.")
     loaded_config = _load_config_or_exit()

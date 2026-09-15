@@ -569,7 +569,6 @@ def test_probe_client_bounds_every_wait() -> None:
 
 
 def test_naming_the_provider_skips_the_menu(tmp_path: Path, claim_succeeds: list[str]) -> None:
-    """Naming the provider is as deliberate an answer as choosing from the menu."""
     result = _run_claim_with_provider(tmp_path, PROVIDER_KEY)
 
     assert result.exit_code == 0
@@ -591,10 +590,11 @@ def test_a_provider_no_entry_defines_is_refused_before_the_token_is_spent(
     assert _stored(tmp_path) == {}
 
 
+# TODO(claude): the test name implies specificity when the code is general. name it after the requirement as i revised it (and then you can drop the docstring imo since the name makes it self-documenting)
 def test_a_setup_token_given_as_the_provider_does_not_come_back_on_stderr(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
-    """Requirement: a provider argument claim does not know is refused without being repeated."""
+    """Requirement: claim refuses and not does not echo an unknown provider arg."""
     result = _run_claim_with_provider(tmp_path, SETUP_TOKEN)
 
     assert result.exit_code == 1
@@ -604,10 +604,11 @@ def test_a_setup_token_given_as_the_provider_does_not_come_back_on_stderr(
     assert claim_succeeds == []
 
 
+# TODO(claude): as above
 def test_a_setup_token_given_after_the_provider_does_not_come_back_on_stderr(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
-    """Requirement: an extra argument is refused without being repeated, before anything is read."""
+    """Requirement: claim refuses and not does not echo an extra arg."""
     _ = _write_config(tmp_path)
     result = runner.invoke(
         cli.app,

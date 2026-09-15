@@ -479,8 +479,7 @@ user's deliberate answer either way — naming it on the command line is as
 deliberate as picking from the menu, and an unknown key is an error rather than
 a guess. An unknown provider or an extra argument is refused without being
 echoed, because it could plausibly be a setup token pasted onto the command
-line instead of at the prompt. An unknown option is still reported in the
-parser's own words, token and all.
+line instead of at the prompt.
 
 The orderings:
 

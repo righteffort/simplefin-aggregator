@@ -389,6 +389,7 @@ def test_a_base_url_no_token_could_carry_is_refused_before_a_record_exists(tmp_p
     assert not app_tokens_path(tmp_path).exists()
 
 
+# TODO(claude): I don't think it is helpful to have tests that show that typer works as expected when using it with the defaults. Remove. Are there other tests like this?
 def test_a_rejected_key_is_named(tmp_path: Path) -> None:
     """Requirement: a key outside the pattern is refused, naming the key and the pattern."""
     _write_config(tmp_path)
