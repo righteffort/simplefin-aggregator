@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 from simplefin_aggregator.provider_response import ProviderFailure, ProviderSuccess
 
 

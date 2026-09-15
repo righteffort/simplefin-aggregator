@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
 # Working agreements
 
 `simplefin-aggregator` is a single-user server that speaks [SimpleFIN protocol

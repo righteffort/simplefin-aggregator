@@ -45,7 +45,6 @@ select = [
 ]
 ignore = [
   "COM812", # missing-trailing-comma -- let the formatter deal with it
-  "CPY001", # missing-copyright-notice
   "D10",    # undocumented-public-*
   "D203",   # incorrect-blank-line-before-class
   "D213",   # multi-line-summary-second-line
@@ -67,6 +66,10 @@ ignore = [
 [tool.ruff.lint.isort]
 split-on-trailing-comma = false
 lines-after-imports = 2
+
+[tool.ruff.lint.flake8-copyright]
+notice-rgx = "SPDX-License-Identifier:\\s*GPL-3\\.0-only"
+min-file-size = 1
 
 [tool.ruff.format]
 docstring-code-format = true

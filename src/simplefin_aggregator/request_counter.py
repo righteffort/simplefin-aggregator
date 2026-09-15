@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Per-provider daily request counts, for observability only — never used as a control."""
 
 from __future__ import annotations

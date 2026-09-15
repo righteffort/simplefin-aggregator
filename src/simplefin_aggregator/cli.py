@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Command-line entry points: `claim`, `app`, and `serve`."""
 
 from __future__ import annotations

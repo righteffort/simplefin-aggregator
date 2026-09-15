@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Which provider owns an account id the client app asked for.
 
 Inverts the prefixing `merge.py` applies: an exposed account id is a

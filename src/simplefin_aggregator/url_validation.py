@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Match provider URLs against a fixed set of known-good roots.
 
 The threat is phishing and paste error. A SimpleFIN setup token is a

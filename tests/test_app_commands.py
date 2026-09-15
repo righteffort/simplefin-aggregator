@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Tests for the `app` commands that issue and manage client app credentials."""
 
 from __future__ import annotations

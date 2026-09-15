@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Tests for the provider registry.
 
 `.invalid` (RFC 2606) is reserved and guaranteed never to resolve, so it is

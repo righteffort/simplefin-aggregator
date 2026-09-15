@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Tests for the provider access URL store."""
 
 from __future__ import annotations

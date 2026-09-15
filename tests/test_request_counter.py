@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 # ruff: noqa: PLR2004
 
 from datetime import UTC, datetime

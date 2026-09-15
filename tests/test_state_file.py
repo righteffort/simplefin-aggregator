@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Tests for the shared state-file helper's error reporting.
 
 A store file holds this application's credentials, so a parse failure must

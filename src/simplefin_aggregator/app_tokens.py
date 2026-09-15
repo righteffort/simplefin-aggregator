@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """App token records: what this aggregator's client apps authenticate with.
 
 Each entry is one app token record, in one of two states: a setup token

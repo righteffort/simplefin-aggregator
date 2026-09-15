@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Build the one v1 response the client app sees out of several providers'.
 
 The account ids this aggregator exposes are each provider's own behind a

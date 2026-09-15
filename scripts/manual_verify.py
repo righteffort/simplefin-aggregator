@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Manual, human-run end-to-end check against the real SimpleFIN demo bridge.
 
 Not part of the automated test suite, which never makes a real network call.

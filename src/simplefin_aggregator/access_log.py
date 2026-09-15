@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """Redact a path segment from uvicorn's own access log.
 
 Uvicorn logs every request's raw path via its own access logger, independent

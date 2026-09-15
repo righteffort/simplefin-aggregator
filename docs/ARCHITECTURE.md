@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+
 # Architecture
 
 This is a developer/agent-facing map of `simplefin-aggregator`. `README.md`

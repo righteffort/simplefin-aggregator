@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
 """The whole flow, checked for the one thing this design exists to prevent.
 
 An app is issued a setup token, claims it, uses what it gets back, and is
