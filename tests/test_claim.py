@@ -28,7 +28,6 @@ if TYPE_CHECKING:
 runner = CliRunner()
 
 PROVIDER_KEY = "my-bank"
-PROVIDER_LABEL = "My Bank"
 PROVIDER_ROOT = "https://provider.example.com/simplefin"
 CLAIM_URL = f"{PROVIDER_ROOT}/claim/some-setup-token"
 SETUP_TOKEN = base64.b64encode(CLAIM_URL.encode("ascii")).decode("ascii")
@@ -44,7 +43,6 @@ CONFIG_TOML = f"""
 base_url = "http://127.0.0.1:9999"
 [[custom_providers]]
 key = "{PROVIDER_KEY}"
-label = "{PROVIDER_LABEL}"
 root = "{PROVIDER_ROOT}"
 
 [[providers]]
@@ -119,19 +117,23 @@ def _run_claim(
     """Invoke `claim` through the provider menu, then feed it the token."""
     _ = _write_config(tmp_path, config)
     return runner.invoke(
-        cli.app, ["claim", "--config-dir", str(tmp_path)], input=f"{choice}\n{token}\n"
+        cli.app,
+        ["claim"],
+        input=f"{choice}\n{token}\n",
+        env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)},
     )
 
 
 def _run_claim_with_provider(
     tmp_path: Path, provider: str, token: str = SETUP_TOKEN, *, config: str = CONFIG_TOML
 ) -> Result:
-    """Invoke `claim --provider`, which skips the menu, then feed it the token."""
+    """Invoke `claim <provider>`, which skips the menu, then feed it the token."""
     _ = _write_config(tmp_path, config)
     return runner.invoke(
         cli.app,
-        ["claim", "--provider", provider, "--config-dir", str(tmp_path)],
+        ["claim", provider],
         input=f"{token}\n",
+        env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)},
     )
 
 
@@ -212,8 +214,8 @@ def test_claim_offers_the_built_in_providers_alongside_the_configured_one(tmp_pa
 
     assert result.exit_code == 0
     for provider in KNOWN_PROVIDERS:
-        assert f"{provider.label} ({provider.root.origin_and_path})" in result.stdout
-    assert f"{PROVIDER_LABEL} ({PROVIDER_ROOT}/)" in result.stdout
+        assert f"{provider.key} ({provider.root.origin_and_path})" in result.stdout
+    assert f"{PROVIDER_KEY} ({PROVIDER_ROOT}/)" in result.stdout
 
 
 @pytest.mark.usefixtures("claim_succeeds")
@@ -312,7 +314,7 @@ def test_claim_fails_on_an_unwritable_config_directory_before_spending_the_token
     # the writability check that has to catch this.
     config_dir.chmod(0o500)
 
-    result = runner.invoke(cli.app, ["claim", "--config-dir", str(config_dir)])
+    result = runner.invoke(cli.app, ["claim"], env={"SIMPLEFIN_AGGREGATOR_DIR": str(config_dir)})
 
     assert result.exit_code == 1
     assert claim_succeeds == []
@@ -553,7 +555,6 @@ def test_probe_client_bounds_every_wait() -> None:
 
 
 def test_naming_the_provider_skips_the_menu(tmp_path: Path, claim_succeeds: list[str]) -> None:
-    """`--provider` is as deliberate an answer as choosing from the menu."""
     result = _run_claim_with_provider(tmp_path, PROVIDER_KEY)
 
     assert result.exit_code == 0
@@ -575,13 +576,31 @@ def test_a_provider_no_entry_defines_is_refused_before_the_token_is_spent(
     assert _stored(tmp_path) == {}
 
 
-def test_a_provider_key_that_is_a_pasted_secret_does_not_come_back_on_stderr(
+def test_claim_refuses_an_unknown_provider_argument_without_echoing_it(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
-    """A mistyped `--provider` is as likely to be a pasted setup token as `--key` is."""
     result = _run_claim_with_provider(tmp_path, SETUP_TOKEN)
 
     assert result.exit_code == 1
+    assert "unknown provider" in result.stderr
+    assert SETUP_TOKEN not in result.stderr
+    assert SETUP_TOKEN not in result.stdout
+    assert claim_succeeds == []
+
+
+def test_claim_refuses_an_extra_argument_without_echoing_it(
+    tmp_path: Path, claim_succeeds: list[str]
+) -> None:
+    _ = _write_config(tmp_path)
+    result = runner.invoke(
+        cli.app,
+        ["claim", PROVIDER_KEY, SETUP_TOKEN],
+        input=f"{SETUP_TOKEN}\n",
+        env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)},
+    )
+
+    assert result.exit_code == 1
+    assert "at most one argument" in result.stderr
     assert SETUP_TOKEN not in result.stderr
     assert SETUP_TOKEN not in result.stdout
     assert claim_succeeds == []
@@ -599,6 +618,19 @@ def test_claim_probes_the_stored_access_url_with_balances_only(
     assert result.exit_code == 0
     assert probed == [f"{PROVIDER_ROOT}/accounts?balances-only=1"]
     assert "warning" not in result.stderr
+
+
+def test_a_succeeding_probe_confirms_the_credentials_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Requirement: a working probe says so, not just silence after "Checking..."."""
+    _ = _install_provider(monkeypatch, _responds(200, ACCESS_URL))
+    _ = _install_probe(monkeypatch, _responds(200, "{}"))
+
+    result = _run_claim(tmp_path, SETUP_TOKEN)
+
+    assert result.exit_code == 0
+    assert "Credentials work." in result.stderr
 
 
 def test_a_failing_probe_warns_and_exits_zero_but_keeps_the_stored_access_url(

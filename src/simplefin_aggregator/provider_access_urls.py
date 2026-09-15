@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, SecretStr, field_serializer
 
-from .config import default_config_dir
+from .config import config_dir
 from .state_file import load_state_file, update_state_file
 
 
@@ -44,10 +44,9 @@ class _AccessUrlFile(BaseModel):
         return {key: access_url.get_secret_value() for key, access_url in access_urls.items()}
 
 
-def provider_creds_path(config_dir: Path | None = None) -> Path:
-    """Where the store lives: in `config_dir`, or the platform default."""
-    directory = config_dir if config_dir is not None else default_config_dir()
-    return directory / PROVIDER_CREDS_FILENAME
+def provider_creds_path(directory: Path | None = None) -> Path:
+    """Where the store lives: in `directory`, or where `config_dir()` resolves."""
+    return (directory if directory is not None else config_dir()) / PROVIDER_CREDS_FILENAME
 
 
 def load_access_urls(path: Path) -> dict[str, SecretStr]:

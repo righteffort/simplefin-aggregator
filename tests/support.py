@@ -100,32 +100,28 @@ def make_config(
                 else {"key": spec.key, "prefix": spec.prefix}
                 for spec in specs
             ],
-            "custom_providers": [
-                {"key": spec.key, "label": "Test Provider", "root": spec.root} for spec in specs
-            ],
+            "custom_providers": [{"key": spec.key, "root": spec.root} for spec in specs],
             "allow_multiple_blank_prefixes": allow_multiple_blank_prefixes,
         }
     )
 
 
-def make_claimed_app(
-    config_dir: Path, key: str = "test-app", label: str = "Test App"
-) -> tuple[str, str]:
+def make_claimed_app(config_dir: Path, key: str = "test-app") -> tuple[str, str]:
     """Put one app that has already claimed into the store.
 
     Returns what it authenticates with, which exists nowhere else: the store
     keeps only digests of it.
     """
     with update_app_tokens(app_tokens_path(config_dir)) as apps:
-        _, unclaimed = new_app_token(label)
+        _, unclaimed = new_app_token()
         credentials, apps[key] = claim_app_token(unclaimed)
     return credentials.username.get_secret_value(), credentials.password.get_secret_value()
 
 
-def make_unclaimed_app(config_dir: Path, key: str = "test-app", label: str = "Test App") -> str:
+def make_unclaimed_app(config_dir: Path, key: str = "test-app") -> str:
     """Put one app with an unspent setup token into the store, returning that secret."""
     with update_app_tokens(app_tokens_path(config_dir)) as apps:
-        secret, apps[key] = new_app_token(label)
+        secret, apps[key] = new_app_token()
     return secret
 
 

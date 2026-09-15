@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, NamedTuple
 
 from pydantic import AwareDatetime, BaseModel, Field, SecretStr
 
-from .config import default_config_dir
+from .config import config_dir
 from .provider_registry import KEY_PATTERN
 from .state_file import load_state_file, update_state_file
 
@@ -70,7 +70,6 @@ class UnclaimedAppToken(BaseModel):
     """A setup token issued to a client app and not yet spent."""
 
     status: Literal["unclaimed"] = "unclaimed"
-    label: str
     created_at: AwareDatetime
     claim_token_sha256: _Sha256Hex
 
@@ -79,7 +78,6 @@ class ClaimedAppToken(BaseModel):
     """What a spent setup token became: the client app's Basic Auth credentials."""
 
     status: Literal["claimed"] = "claimed"
-    label: str
     created_at: AwareDatetime
     claimed_at: AwareDatetime
     username_sha256: _Sha256Hex
@@ -113,7 +111,7 @@ def matches(secret: str, stored_digest: str) -> bool:
     return secrets.compare_digest(_digest(secret), stored_digest)
 
 
-def new_app_token(label: str) -> tuple[str, UnclaimedAppToken]:
+def new_app_token() -> tuple[str, UnclaimedAppToken]:
     """Mint a setup token secret and the record that will recognise it.
 
     The secret is returned and never stored, so this is the only moment it
@@ -121,7 +119,7 @@ def new_app_token(label: str) -> tuple[str, UnclaimedAppToken]:
     """
     secret = secrets.token_urlsafe(_SECRET_BYTES)
     return secret, UnclaimedAppToken(
-        label=label, created_at=datetime.now(UTC), claim_token_sha256=_digest(secret)
+        created_at=datetime.now(UTC), claim_token_sha256=_digest(secret)
     )
 
 
@@ -135,7 +133,6 @@ def claim_app_token(token: UnclaimedAppToken) -> tuple[ClientCredentials, Claime
     username = secrets.token_urlsafe(_SECRET_BYTES)
     password = secrets.token_urlsafe(_SECRET_BYTES)
     return ClientCredentials(SecretStr(username), SecretStr(password)), ClaimedAppToken(
-        label=token.label,
         created_at=token.created_at,
         claimed_at=datetime.now(UTC),
         username_sha256=_digest(username),
@@ -143,10 +140,9 @@ def claim_app_token(token: UnclaimedAppToken) -> tuple[ClientCredentials, Claime
     )
 
 
-def app_tokens_path(config_dir: Path | None = None) -> Path:
-    """Where the store lives: in `config_dir`, or the platform default."""
-    directory = config_dir if config_dir is not None else default_config_dir()
-    return directory / APP_TOKENS_FILENAME
+def app_tokens_path(directory: Path | None = None) -> Path:
+    """Where the store lives: in `directory`, or where `config_dir()` resolves."""
+    return (directory if directory is not None else config_dir()) / APP_TOKENS_FILENAME
 
 
 def load_app_tokens(path: Path, *, warn: bool = True) -> dict[str, AppTokenRecord]:

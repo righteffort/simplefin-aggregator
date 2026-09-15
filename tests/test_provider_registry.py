@@ -29,7 +29,7 @@ EXPECTED_STATIC_PROVIDERS = [
 
 
 def _entry(key: str, root: str = "https://my-bridge.invalid/simplefin") -> ProviderEntry:
-    return ProviderEntry(key=key, label=f"label for {key}", root=parse_root(root))
+    return ProviderEntry(key=key, root=parse_root(root))
 
 
 def test_static_provider_roots() -> None:
@@ -47,11 +47,6 @@ def test_static_provider_root_is_canonical(provider: ProviderEntry) -> None:
     assert root.origin_and_path.endswith("/")
     assert not root.has_creds
     assert parse_root(root.origin_and_path).origin_and_path == root.origin_and_path
-    assert provider.label
-
-
-def test_static_provider_labels_are_present() -> None:
-    assert all(provider.label for provider in KNOWN_PROVIDERS)
 
 
 def test_merged_providers_keeps_static_entries_first() -> None:
@@ -77,7 +72,6 @@ def test_find_provider_returns_the_matching_entry() -> None:
     providers = merged_providers([extra])
 
     assert find_provider(providers, "my-bridge") is extra
-    assert find_provider(providers, "redbark").label == "Redbark"
 
 
 def test_find_provider_rejects_an_absent_key() -> None:
@@ -110,7 +104,7 @@ def test_custom_provider_root_is_rejected_with_a_reason(raw: str, expected: str)
         _ = parse_root(raw)
 
 
-BAD_KEYS = ["", "Redbark", "my bank", "my_bank", "café", "my-bridge\n", "a/b", "x\x1b[31m"]
+BAD_KEYS = ["", "-bank", "Redbark", "my bank", "my_bank", "café", "my-bridge\n", "a/b", "x\x1b[31m"]
 
 
 @pytest.mark.parametrize("key", BAD_KEYS)

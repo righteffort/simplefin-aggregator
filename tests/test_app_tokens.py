@@ -21,13 +21,14 @@ from simplefin_aggregator.app_tokens import (
     new_app_token,
     update_app_tokens,
 )
+from simplefin_aggregator.config import DIR_ENV_VAR
 from simplefin_aggregator.state_file import StateFileError
 
 
-def _store_a_new_app(path: Path, key: str = "actual-budget", label: str = "Actual Budget") -> str:
+def _store_a_new_app(path: Path, key: str = "actual-budget") -> str:
     """Issue one app, returning the setup token secret it minted."""
     with update_app_tokens(path) as apps:
-        secret, apps[key] = new_app_token(label)
+        secret, apps[key] = new_app_token()
     return secret
 
 
@@ -47,7 +48,11 @@ def test_app_tokens_path_uses_the_given_config_dir(tmp_path: Path) -> None:
     assert app_tokens_path(tmp_path) == tmp_path / APP_TOKENS_FILENAME
 
 
-def test_app_tokens_path_defaults_to_the_platform_config_dir() -> None:
+def test_app_tokens_path_defaults_to_the_platform_config_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(DIR_ENV_VAR, raising=False)
+
     path = app_tokens_path()
 
     assert path.name == APP_TOKENS_FILENAME
@@ -58,21 +63,20 @@ def test_missing_file_loads_as_empty(tmp_path: Path) -> None:
     assert load_app_tokens(app_tokens_path(tmp_path)) == {}
 
 
-def test_a_new_app_is_stored_unclaimed_with_its_label(tmp_path: Path) -> None:
+def test_a_new_app_is_stored_unclaimed(tmp_path: Path) -> None:
     path = app_tokens_path(tmp_path)
 
     _ = _store_a_new_app(path)
 
     record = _unclaimed(path)
-    assert record.label == "Actual Budget"
     assert record.status == "unclaimed"
 
 
 def test_an_update_keeps_the_apps_it_did_not_touch(tmp_path: Path) -> None:
     path = app_tokens_path(tmp_path)
 
-    _ = _store_a_new_app(path, key="first", label="First")
-    _ = _store_a_new_app(path, key="second", label="Second")
+    _ = _store_a_new_app(path, key="first")
+    _ = _store_a_new_app(path, key="second")
 
     assert set(load_app_tokens(path)) == {"first", "second"}
 
@@ -105,8 +109,8 @@ def test_the_stored_app_recognises_its_own_setup_token_and_no_other(tmp_path: Pa
 def test_two_apps_get_different_setup_tokens(tmp_path: Path) -> None:
     path = app_tokens_path(tmp_path)
 
-    first = _store_a_new_app(path, key="first", label="First")
-    second = _store_a_new_app(path, key="second", label="Second")
+    first = _store_a_new_app(path, key="first")
+    second = _store_a_new_app(path, key="second")
 
     assert first != second
     assert not matches(first, _unclaimed(path, "second").claim_token_sha256)
@@ -124,7 +128,7 @@ def test_a_claim_issues_credentials_the_stored_app_recognises(tmp_path: Path) ->
     assert matches(credentials.password.get_secret_value(), record.password_sha256)
 
 
-def test_a_claim_keeps_the_label_and_the_creation_time(tmp_path: Path) -> None:
+def test_a_claim_keeps_the_creation_time(tmp_path: Path) -> None:
     path = app_tokens_path(tmp_path)
     _ = _store_a_new_app(path)
     before = _unclaimed(path)
@@ -133,7 +137,6 @@ def test_a_claim_keeps_the_label_and_the_creation_time(tmp_path: Path) -> None:
         _, apps["actual-budget"] = claim_app_token(before)
 
     after = _claimed(path)
-    assert after.label == before.label
     assert after.created_at == before.created_at
     assert before.created_at <= after.claimed_at
 
@@ -238,7 +241,7 @@ def test_an_update_that_raises_writes_nothing(tmp_path: Path) -> None:
 
     def add_an_app_and_then_fail() -> None:
         with update_app_tokens(path) as apps:
-            _, apps["second"] = new_app_token("Second")
+            _, apps["second"] = new_app_token()
             raise RuntimeError
 
     with pytest.raises(RuntimeError):
@@ -270,8 +273,7 @@ def test_concurrent_updates_do_not_lose_each_other(
 
     monkeypatch.setattr(Path, "read_text", slow_read_text)
     writers = [
-        threading.Thread(target=_store_a_new_app, args=(path, key, key.title()))
-        for key in ("first", "second")
+        threading.Thread(target=_store_a_new_app, args=(path, key)) for key in ("first", "second")
     ]
     for writer in writers:
         writer.start()

@@ -55,8 +55,7 @@ codebase than the proxying does.
 ## On-disk state
 
 Three files, plus a lock sidecar per store, all in the directory
-`--config-dir` selects for every subcommand, defaulting to
-`platformdirs.user_config_dir("simplefin-aggregator")`:
+`config_dir()` (`config.py`) resolves.
 
 | File | Written by | Holds |
 |---|---|---|
@@ -100,7 +99,7 @@ It does not run on the `.lock` sidecars, which hold nothing.
 The provider store is keyed by provider key because that is the one identifier
 `config.toml` and the store share; neither file has to name the other — which
 is why two accounts at one provider is a non-goal. The app token store is keyed
-by the `--key` its command was given, constrained to `[a-z0-9-]+` at the
+by the key its command was given, constrained to `[a-z0-9][a-z0-9-]*` at the
 command and again in the model, so what `app list` prints is what this
 application could have written.
 
@@ -170,9 +169,10 @@ built-in list does not name. Its `@field_validator("root")` runs
 `parse_root()` and reports a bad root against that one field, rather than
 leaving it to the model-level check to reject the whole `Config` — so the
 error names the offending entry instead of, via pydantic's default
-`ValidationError` rendering, the entire file. `as_provider_entry()` converts
-one into a `ProviderEntry`, validating both `key` and `root` again in the
-process; `provider_entries()` merges the result into `KNOWN_PROVIDERS`
+`ValidationError` rendering, the entire file.
+`as_provider_entry()` converts one into a `ProviderEntry`,
+validating both `key` and `root` again in the process; `provider_entries()`
+merges the result into `KNOWN_PROVIDERS`
 through `merged_providers`, which rejects a duplicate key rather than letting
 a custom entry shadow or collide with a built-in one.
 
@@ -181,13 +181,11 @@ a custom entry shadow or collide with a built-in one.
 ```text
 UnclaimedAppToken                     # a setup token issued and not yet spent
   status: Literal["unclaimed"]
-  label: str
   created_at: AwareDatetime
   claim_token_sha256: _Sha256Hex
 
 ClaimedAppToken                       # what a claim exchanged it for
   status: Literal["claimed"]
-  label: str
   created_at: AwareDatetime
   claimed_at: AwareDatetime
   username_sha256: _Sha256Hex
@@ -226,10 +224,10 @@ a plaintext credential on disk.
 ### `ProviderEntry` (`provider_registry.py`)
 
 ```text
-ProviderEntry(key: str, label: str, root: NormalizedUrl)   # frozen
+ProviderEntry(key: str, root: NormalizedUrl)   # frozen
 ```
 
-`key` is constrained to `[a-z0-9-]+` in `__post_init__`, through which every
+`key` is constrained to `[a-z0-9][a-z0-9-]*` in `__post_init__`, through which every
 entry passes, config-supplied ones included — that is what makes a key safe to
 render in an error message and to use as a store key. **Published keys are
 permanent**: changing one orphans users' stored access URLs and breaks their
@@ -331,7 +329,7 @@ vanishing and a set of new ones appearing. Prefixes are as permanent as
 provider keys.
 
 The default, `f"{key}:"`, is prefix-free by construction: keys are unique and
-match `[a-z0-9-]+`, so no key plus a colon can be a prefix of another. An
+match `[a-z0-9][a-z0-9-]*`, so no key plus a colon can be a prefix of another. An
 explicit prefix is constrained to `[A-Za-z0-9._:-]*`, because it travels in a
 URL query parameter and lands in the client app's database and nothing is
 gained by allowing whitespace or `%` in it.
@@ -407,15 +405,16 @@ codebase:
 
 ## Request/command flows
 
-### `serve [--config-dir DIR]`
+### `serve`
 
 ```text
 cli.serve
-  -> _load_config_or_exit(config_path(dir))   # load_config, or print+exit 1
-  -> _check_app_store_or_exit(dir)            # store parses, directory writable
+  -> note naming the config directory -> stderr
+  -> _load_config_or_exit()                   # load_config, or print+exit 1
+  -> _check_app_store_or_exit()               # store parses, directory writable
                                               #   empty store -> warn, not fail
-  -> load_access_urls(provider_creds_path(dir))
-  -> create_app(config, access_urls, app_tokens_path(dir))
+  -> load_access_urls(provider_creds_path())
+  -> create_app(config, access_urls, app_tokens_path())
                                               # validates every stored access URL, see below
   -> install_access_log_redaction(...)        # generic filter, told about CLAIM_PATH_PREFIX
   -> uvicorn.run(app, host, port)
@@ -429,8 +428,13 @@ configured `provider.key` it resolves the entry, looks the key up in the store
 (missing → "claim one first"), and re-runs `validate_access_url` against that
 provider's *current* root. That is a single-entry comparison, not a scan — the
 URL was claimed from one specific provider, so that is the root it must still
-match. All of it happens before uvicorn starts, so a config change that
-invalidates a stored URL fails at startup, not on the first request.
+match. Every provider's check runs regardless of the others' outcome, and
+`create_app` raises every failure together as one `ProviderAccessUrlError`;
+`cli.py` prints each on its own line, the same display-safe text
+`validate_access_url`/`StateFileError` produce for a single provider, so
+"Cross-cutting: secrets and logging" governs it unchanged. All of it happens
+before uvicorn starts, so a config change that invalidates a stored URL fails
+at startup, not on the first request.
 
 The app token store is checked at startup but **not read into the app**: the
 server reads it on every authenticated request and writes it on every claim, so
@@ -440,14 +444,15 @@ directory it cannot write would lose every claim. An empty store is a warning
 rather than a failure: it is the legitimate state between installing the server
 and issuing the first app its token.
 
-### CLI `claim [--provider KEY] [--config-dir DIR]` (claiming from a *real* provider)
+### CLI `claim [provider]` (claiming from a *real* provider)
 
 ```text
 cli.claim
-  -> _load_config_or_exit(...)                # claim needs a fully valid config, like serve
+  -> refuse extra arguments                  # never quoting them
+  -> _load_config_or_exit()                  # claim needs a fully valid config, like serve
   -> load_access_urls(...) + check_can_save(...)   # BEFORE the token is spent
-  -> _resolve_provider(config.provider_entries(), provider)
-       --provider given -> _check_key + find_provider    # named, so exact; never fuzzy
+  -> the provider, from config.provider_entries()
+       provider given   -> find_provider    # named, so exact; never fuzzy; never echoed
        otherwise        -> numbered menu; no default, no free-text host
   -> prompt for the token, hidden if stdin is a real terminal
   -> _decode_setup_token  -> validate_claim_url(entry.root, ...)   # BEFORE any network call
@@ -456,9 +461,10 @@ cli.claim
        - non-200  -> status only, never the body (3xx lands here too)
   -> validate_access_url(entry.root, response.text.strip(), ...)
   -> save_access_url(store, entry.key, access_url)
+  -> note naming the store path -> stderr
   -> _probe_access_url(access_url): GET /accounts?balances-only=1, one attempt
        "Checking that the credentials work..." on stderr, then:
-       success    -> nothing further printed
+       success    -> "Credentials work."
        failure    -> "warning: could not confirm ..."; exit code stays 0
   -> warn if no [[providers]] entry names this key
 ```
@@ -467,11 +473,11 @@ One property and four orderings in there are load-bearing.
 
 The property: **the provider is named or chosen, never defaulted.** Which root
 the token is matched against is the whole of the phishing defense, so it is the
-user's deliberate answer either way — `--provider` on the command line is as
+user's deliberate answer either way — naming it on the command line is as
 deliberate as picking from the menu, and an unknown key is an error rather than
-a guess. A `--provider` failing the key pattern is rejected without being
-echoed, for the reason `--key` is: a mistyped one is most often a pasted setup
-token.
+a guess. An unknown provider or an extra argument is refused without being
+echoed, because it could plausibly be a setup token pasted onto the command
+line instead of at the prompt.
 
 The orderings:
 
@@ -497,28 +503,26 @@ used elsewhere in this codebase.
 ### CLI `app new` / `regen` / `revoke` (obtaining/revoking *this aggregator's* tokens)
 
 ```text
-cli.app_new(key, label, config_dir)
-  -> _load_config_or_exit(...)                  # for base_url
-  -> _check_key(key)                            # rejected keys are never named back
-  -> _writable_store_or_exit(config_dir)        # directory writable, and warn if shared
+cli.app_new(key)
+  -> _load_config_or_exit()                     # for base_url
+  -> _check_key(key)                            # [a-z0-9][a-z0-9-]*, naming a rejected key
+  -> _writable_store_or_exit()                  # directory writable, and warn if shared
   -> update_app_tokens(store):                  # one locked read-modify-write
        key already present -> exit 1, naming `app regen`, store untouched
-       else -> new_app_token(label) -> (secret, UnclaimedAppToken)
+       else -> new_app_token() -> (secret, UnclaimedAppToken)
+  -> note naming the store path -> stderr
   -> build_setup_token(base_url, secret) -> stdout, alone
   -> "shown once" note -> stderr
 ```
 
-Three orderings here are load-bearing. The duplicate check is *inside* the
+Two orderings here are load-bearing. The duplicate check is *inside* the
 lock, or it answers from a version another writer is already replacing. The
 token is printed *after* the store is written, because a token this aggregator
-has no record of looks to the user like a working setup that never syncs. And
-a rejected `--key` is not echoed, because a mistyped one is most often a
-pasted setup token and base64 is exactly what `[a-z0-9-]+` rejects.
+has no record of looks to the user like a working setup that never syncs.
 
-`app regen` is the same flow over an existing record, keeping only the label.
-`app revoke` deletes the record outright. Neither leaves an app holding a live
-credential and an unspent token at once, which is what would make "revoked"
-mean two things.
+`app regen` is the same flow over an existing record. `app revoke` deletes the
+record outright. Neither leaves an app holding a live credential and an
+unspent token at once, which is what would make "revoked" mean two things.
 
 ### `POST /simplefin/claim/{token}`
 
@@ -700,7 +704,7 @@ before touching anything credential-adjacent:
    `ConfigCheckError` and `ProviderRegistryError` — the checks that span
    providers, which run after validation and so cannot use that rendering. It
    interpolates their message directly, which is safe because both build their
-   text from provider keys alone, already constrained to `[a-z0-9-]+`. The
+   text from provider keys alone, already constrained to `[a-z0-9][a-z0-9-]*`. The
    catch names those two types rather than `ValueError`, so an unexpected one
    stays a traceback instead of being reported as the operator's config.
 4. **uvicorn's own access logger** — bypasses application-level logging
@@ -733,6 +737,10 @@ before touching anything credential-adjacent:
    application does not do is write a string of its own into `errors`: that array
    holds only what the providers themselves reported.
 
+`claim` also keeps what is typed on its command line out of its errors: an
+extra argument is refused without being quoted, and an unknown provider is
+reported without being named. The `claim` flow says why.
+
 **A dependency's own logging is outside all five.** `httpcore2` traces each
 exchange at DEBUG, including the exception it is about to raise, and a protocol
 error's text quotes the status line the provider sent — so a provider that
@@ -741,13 +749,6 @@ Basic Auth password in a debug log. Nothing here sets a log level, so those
 records reach no one who did not turn DEBUG on themselves. Clamping `httpcore2`
 in `serve` would close it and would also silence an operator who deliberately
 asked for it, so the gap is left open.
-
-A sixth rule has no single home because it applies at every command boundary:
-**a value the user typed is not safe to echo just because they typed it.** A
-mistyped `--key` is most often a pasted setup token, so `_check_key` rejects it
-without naming it, and `claim` declines to quote a setup token it could not
-decode. Repeating the value would put a secret on stderr in order to tell the
-user something they already know.
 
 **Credentials reach a provider only through `auth=`, never through a URL.**
 Keep it that way: it is what leaves a request's own URL free of secrets, on

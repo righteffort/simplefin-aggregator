@@ -29,7 +29,7 @@ from .provider_resolution import resolve_providers_for_account
 from .request_counter import RequestCounter
 from .state_file import StateFileError
 from .transport import fetch_all
-from .url_validation import validate_access_url
+from .url_validation import UrlValidationError, validate_access_url
 
 
 if TYPE_CHECKING:
@@ -57,6 +57,21 @@ PROTOCOL_VERSION = "1.0"
 # uvicorn's access log (see access_log.py) -- keeping both derived from this
 # one constant means the route and the redaction can't silently drift apart.
 CLAIM_PATH_PREFIX = "/simplefin/claim/"
+
+
+class ProviderAccessUrlError(Exception):
+    """One or more configured providers have no access URL that still works.
+
+    Carries every provider's message, in configured order, each already the
+    display-safe text of the `StateFileError` or `UrlValidationError`
+    `_resolve_access_url` raised for that provider -- this only collects them.
+    """
+
+    messages: Sequence[str]
+
+    def __init__(self, messages: Sequence[str]) -> None:
+        super().__init__("\n".join(messages))
+        self.messages = messages
 
 
 class _UnknownSetupTokenError(Exception):
@@ -122,6 +137,26 @@ def _resolve_access_url(
     return validate_access_url(entry.root, stored.get_secret_value(), provider=key)
 
 
+def _resolve_all_access_urls(
+    config: Config, access_urls: Mapping[str, SecretStr]
+) -> dict[str, NormalizedUrl]:
+    """Validate every configured provider's stored access URL.
+
+    Collects every provider's failure, so `create_app` reports them all
+    together.
+    """
+    resolved: dict[str, NormalizedUrl] = {}
+    errors: list[str] = []
+    for provider in config.providers:
+        try:
+            resolved[provider.key] = _resolve_access_url(config, access_urls, provider.key)
+        except (StateFileError, UrlValidationError) as exc:
+            errors.append(str(exc))
+    if errors:
+        raise ProviderAccessUrlError(errors)
+    return resolved
+
+
 def _forwarded_accounts_params(request: Request) -> list[tuple[str, str]]:
     """Narrow the client app's query parameters to the ones v1 defines."""
     return [
@@ -168,21 +203,17 @@ def create_app(
 ) -> FastAPI:
     """Build the FastAPI app for a config, the access URLs claimed so far, and the app token store.
 
-    Raises rather than starting a server that cannot work: an unclaimed
-    provider or a stored access URL that no longer matches its provider's root
-    is reported here, before uvicorn starts, not on the first request. One
-    such provider stops the whole server, including the providers that are
-    claimed and would work, and only the first is named. This is all-or-nothing
-    where a provider that fails a live request costs only its own accounts.
+    Raises rather than starting a server that cannot work: every configured
+    provider that is unclaimed or holds a stored access URL that no longer
+    matches its root is named together, via `ProviderAccessUrlError`, before
+    uvicorn starts and not on the first request. This is all-or-nothing where
+    a provider that fails a live request costs only its own accounts.
 
     The app token store is named by path rather than read here, because unlike
     the config it is live state: every request that authenticates reads it, so
     that `app revoke` takes effect without a restart.
     """
-    provider_access_urls = {
-        provider.key: _resolve_access_url(config, access_urls, provider.key)
-        for provider in config.providers
-    }
+    provider_access_urls = _resolve_all_access_urls(config, access_urls)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:

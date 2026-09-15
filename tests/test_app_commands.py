@@ -46,11 +46,13 @@ def _write_config(tmp_path: Path) -> None:
 
 
 def _run(tmp_path: Path, *arguments: str) -> Result:
-    return runner.invoke(cli.app, ["app", *arguments, "--config-dir", str(tmp_path)])
+    return runner.invoke(
+        cli.app, ["app", *arguments], env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)}
+    )
 
 
-def _new(tmp_path: Path, key: str = "actual-budget", label: str = "Actual Budget") -> Result:
-    return _run(tmp_path, "new", "--key", key, "--label", label)
+def _new(tmp_path: Path, key: str = "actual-budget") -> Result:
+    return _run(tmp_path, "new", key)
 
 
 def _claim_secret(result: Result) -> str:
@@ -88,14 +90,14 @@ def _claim_in_the_store(tmp_path: Path, key: str = "actual-budget") -> ClientCre
     return credentials
 
 
-def test_new_records_the_app_as_unclaimed_under_its_label(tmp_path: Path) -> None:
+def test_new_records_the_app_as_unclaimed(tmp_path: Path) -> None:
     _write_config(tmp_path)
 
     result = _new(tmp_path)
 
     assert result.exit_code == 0
     record = _unclaimed(tmp_path)
-    assert record.label == "Actual Budget"
+    assert record.status == "unclaimed"
 
 
 def test_new_puts_the_setup_token_on_stdout_and_nothing_else(tmp_path: Path) -> None:
@@ -138,12 +140,21 @@ def test_the_note_that_the_token_is_shown_once_goes_to_stderr(tmp_path: Path) ->
     assert "regen" in result.stderr
 
 
+def test_new_names_the_store_it_wrote(tmp_path: Path) -> None:
+    """The directory is invisible state, so `app new` says where it landed."""
+    _write_config(tmp_path)
+
+    result = _new(tmp_path)
+
+    assert str(app_tokens_path(tmp_path)) in result.stderr
+
+
 def test_new_refuses_a_key_that_already_exists_and_says_how_to_reissue(tmp_path: Path) -> None:
     _write_config(tmp_path)
     _ = _new(tmp_path)
     before = app_tokens_path(tmp_path).read_bytes()
 
-    result = _new(tmp_path, label="A Different Label")
+    result = _new(tmp_path)
 
     assert result.exit_code == 1
     assert "app regen" in result.stderr
@@ -161,19 +172,17 @@ def test_new_refuses_a_key_the_stores_are_not_keyed_by(tmp_path: Path) -> None:
     assert not app_tokens_path(tmp_path).exists()
 
 
-def test_list_shows_each_app_with_its_label_and_status(tmp_path: Path) -> None:
+def test_list_shows_each_app_with_its_key_and_status(tmp_path: Path) -> None:
     _write_config(tmp_path)
     _ = _new(tmp_path)
-    _ = _new(tmp_path, key="beancount", label="Beancount importer")
+    _ = _new(tmp_path, key="beancount")
     _ = _claim_in_the_store(tmp_path, "beancount")
 
     result = _run(tmp_path, "list")
 
     assert result.exit_code == 0
     rows = {line.split()[0]: line for line in result.stdout.splitlines()[1:]}
-    assert "Actual Budget" in rows["actual-budget"]
     assert "unclaimed" in rows["actual-budget"]
-    assert "Beancount importer" in rows["beancount"]
     # Checked as a whole word: "claimed" is a substring of "unclaimed", so a
     # containment check on the output is answered by the other row.
     assert "claimed" in rows["beancount"].split()
@@ -229,9 +238,9 @@ def test_list_of_an_empty_store_keeps_stdout_empty(tmp_path: Path) -> None:
 def test_revoke_removes_the_app(tmp_path: Path) -> None:
     _write_config(tmp_path)
     _ = _new(tmp_path)
-    _ = _new(tmp_path, key="beancount", label="Beancount importer")
+    _ = _new(tmp_path, key="beancount")
 
-    result = _run(tmp_path, "revoke", "--key", "actual-budget")
+    result = _run(tmp_path, "revoke", "actual-budget")
 
     assert result.exit_code == 0
     assert set(load_app_tokens(app_tokens_path(tmp_path))) == {"beancount"}
@@ -242,10 +251,31 @@ def test_revoke_removes_a_claimed_app_as_readily_as_an_unclaimed_one(tmp_path: P
     _ = _new(tmp_path)
     _ = _claim_in_the_store(tmp_path)
 
-    result = _run(tmp_path, "revoke", "--key", "actual-budget")
+    result = _run(tmp_path, "revoke", "actual-budget")
 
     assert result.exit_code == 0
     assert load_app_tokens(app_tokens_path(tmp_path)) == {}
+
+
+def test_revoke_does_not_name_the_directory(tmp_path: Path) -> None:
+    """Unlike `app new`/`app regen`, `app revoke` says only what it already said."""
+    _write_config(tmp_path)
+    _ = _new(tmp_path)
+
+    result = _run(tmp_path, "revoke", "actual-budget")
+
+    assert str(tmp_path) not in result.stderr
+
+
+def test_list_does_not_name_the_directory(tmp_path: Path) -> None:
+    """Unlike `app new`/`app regen`, `app list` says only what it already said."""
+    _write_config(tmp_path)
+    _ = _new(tmp_path)
+
+    result = _run(tmp_path, "list")
+
+    assert str(tmp_path) not in result.stdout
+    assert str(tmp_path) not in result.stderr
 
 
 def test_revoking_an_unknown_key_fails_rather_than_reporting_success(tmp_path: Path) -> None:
@@ -253,22 +283,22 @@ def test_revoking_an_unknown_key_fails_rather_than_reporting_success(tmp_path: P
     _ = _new(tmp_path)
     before = app_tokens_path(tmp_path).read_bytes()
 
-    result = _run(tmp_path, "revoke", "--key", "beancount")
+    result = _run(tmp_path, "revoke", "beancount")
 
     assert result.exit_code == 1
     assert app_tokens_path(tmp_path).read_bytes() == before
 
 
-def test_regen_returns_a_claimed_app_to_unclaimed_and_keeps_its_label(tmp_path: Path) -> None:
+def test_regen_returns_a_claimed_app_to_unclaimed(tmp_path: Path) -> None:
     _write_config(tmp_path)
     _ = _new(tmp_path)
     _ = _claim_in_the_store(tmp_path)
 
-    result = _run(tmp_path, "regen", "--key", "actual-budget")
+    result = _run(tmp_path, "regen", "actual-budget")
 
     assert result.exit_code == 0
     record = _unclaimed(tmp_path)
-    assert record.label == "Actual Budget"
+    assert record.status == "unclaimed"
 
 
 def test_regen_prints_a_setup_token_the_new_record_recognises(tmp_path: Path) -> None:
@@ -276,9 +306,19 @@ def test_regen_prints_a_setup_token_the_new_record_recognises(tmp_path: Path) ->
     _ = _new(tmp_path)
     _ = _claim_in_the_store(tmp_path)
 
-    result = _run(tmp_path, "regen", "--key", "actual-budget")
+    result = _run(tmp_path, "regen", "actual-budget")
 
     assert matches(_claim_secret(result), _unclaimed(tmp_path).claim_token_sha256)
+
+
+def test_regen_names_the_store_it_wrote(tmp_path: Path) -> None:
+    """The directory is invisible state, so `app regen` says where it landed."""
+    _write_config(tmp_path)
+    _ = _new(tmp_path)
+
+    result = _run(tmp_path, "regen", "actual-budget")
+
+    assert str(app_tokens_path(tmp_path)) in result.stderr
 
 
 def test_regen_discards_what_the_app_held_before(tmp_path: Path) -> None:
@@ -289,7 +329,7 @@ def test_regen_discards_what_the_app_held_before(tmp_path: Path) -> None:
     before = load_app_tokens(app_tokens_path(tmp_path))["actual-budget"]
     assert isinstance(before, ClaimedAppToken)
 
-    _ = _run(tmp_path, "regen", "--key", "actual-budget")
+    _ = _run(tmp_path, "regen", "actual-budget")
 
     written = app_tokens_path(tmp_path).read_text()
     assert before.username_sha256 not in written
@@ -300,7 +340,7 @@ def test_regen_discards_what_the_app_held_before(tmp_path: Path) -> None:
 def test_regen_of_an_unknown_key_fails_and_issues_nothing(tmp_path: Path) -> None:
     _write_config(tmp_path)
 
-    result = _run(tmp_path, "regen", "--key", "actual-budget")
+    result = _run(tmp_path, "regen", "actual-budget")
 
     assert result.exit_code == 1
     assert result.stdout == ""
@@ -347,31 +387,10 @@ def test_a_base_url_no_token_could_carry_is_refused_before_a_record_exists(tmp_p
     assert not app_tokens_path(tmp_path).exists()
 
 
-def test_a_key_that_is_a_pasted_secret_does_not_come_back_on_stderr(tmp_path: Path) -> None:
-    """A mistyped `--key` is most often a setup token, and the constraint rejects it.
-
-    Repeating the value would put a secret on stderr in order to tell the user
-    what they had just typed.
-    """
-    _write_config(tmp_path)
-    pasted = base64.b64encode(f"{BASE_URL}/simplefin/claim/s3cret-marker".encode()).decode()
-
-    for arguments in (
-        ("new", "--key", pasted, "--label", "Actual Budget"),
-        ("revoke", "--key", pasted),
-        ("regen", "--key", pasted),
-    ):
-        result = _run(tmp_path, *arguments)
-        assert result.exit_code == 1, arguments
-        assert pasted not in result.stderr, arguments
-        assert "s3cret-marker" not in result.stderr, arguments
-        assert result.stdout == "", arguments
-
-
 SHARED_DIRECTORY_COMMANDS = {
-    "new": ("new", "--key", "second", "--label", "Second"),
-    "revoke": ("revoke", "--key", "actual-budget"),
-    "regen": ("regen", "--key", "actual-budget"),
+    "new": ("new", "second"),
+    "revoke": ("revoke", "actual-budget"),
+    "regen": ("regen", "actual-budget"),
 }
 
 
@@ -406,10 +425,10 @@ def test_the_commands_report_a_malformed_store_rather_than_replacing_it(tmp_path
     _ = path.write_text("{not json")
 
     for arguments in (
-        ("new", "--key", "actual-budget", "--label", "Actual Budget"),
+        ("new", "actual-budget"),
         ("list",),
-        ("revoke", "--key", "actual-budget"),
-        ("regen", "--key", "actual-budget"),
+        ("revoke", "actual-budget"),
+        ("regen", "actual-budget"),
     ):
         result = _run(tmp_path, *arguments)
         assert result.exit_code == 1, arguments

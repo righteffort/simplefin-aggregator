@@ -7,11 +7,15 @@ from typing import TYPE_CHECKING
 import pytest
 
 from simplefin_aggregator.config import (
+    DIR_ENV_VAR,
     Config,
     ConfigCheckError,
     ConfigError,
     Provider,
     _ConfigModel,  # pyright: ignore[reportPrivateUsage] # the parity test is about this module's internals
+    config_dir,
+    config_path,
+    default_config_dir,
     load_config,
 )
 from simplefin_aggregator.provider_registry import KNOWN_PROVIDERS
@@ -29,7 +33,6 @@ base_url = "http://127.0.0.1:8080"
 # Before [[providers]] so that a test can cut the providers off the end.
 [[custom_providers]]
 key = "my-bank"
-label = "My Bank"
 root = "https://provider.example.com/simplefin"
 
 [[providers]]
@@ -182,7 +185,6 @@ def _providers_toml(
         f"""
 [[custom_providers]]
 key = "{key}"
-label = "Test Provider"
 root = "https://{key}.example.com/simplefin"
 """
         for key in dict.fromkeys(key for key, _ in entries)
@@ -521,3 +523,39 @@ def test_load_config_accepts_a_loopback_http_custom_provider_root(tmp_path: Path
     config = load_config(_write(tmp_path, loopback))
 
     assert config.provider_entries()[-1].root.origin_and_path == "http://127.0.0.1:8081/simplefin/"
+
+
+def test_config_dir_env_var_selects_the_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`SIMPLEFIN_AGGREGATOR_DIR` names the directory `config_dir()` resolves to."""
+    monkeypatch.setenv(DIR_ENV_VAR, str(tmp_path))
+
+    assert config_dir() == tmp_path
+
+
+def test_config_dir_defaults_when_the_env_var_is_unset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With no `SIMPLEFIN_AGGREGATOR_DIR`, `config_dir()` falls back to the platform default."""
+    monkeypatch.delenv(DIR_ENV_VAR, raising=False)
+    monkeypatch.setattr("simplefin_aggregator.config.default_config_dir", lambda: tmp_path)
+
+    assert config_dir() == tmp_path
+
+
+def test_config_path_uses_the_given_directory(tmp_path: Path) -> None:
+    assert config_path(tmp_path) == tmp_path / "config.toml"
+
+
+def test_config_path_defaults_to_config_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With no directory argument, `config_path()` resolves through `config_dir()`."""
+    monkeypatch.setenv(DIR_ENV_VAR, str(tmp_path))
+
+    assert config_path() == tmp_path / "config.toml"
+
+
+def test_default_config_dir_names_the_application() -> None:
+    assert "simplefin-aggregator" in str(default_config_dir())

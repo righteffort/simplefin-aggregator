@@ -36,7 +36,7 @@ class ProviderRegistryError(ValueError):
     """
 
 
-KEY_PATTERN = re.compile(r"[a-z0-9-]+")
+KEY_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]*")
 """What a key may look like, for a provider here and for a client app.
 
 Both name a record in a store keyed by it and both are typed on a command
@@ -51,7 +51,6 @@ class ProviderEntry:
     # files reference. Changing one invalidates stored access URLs and config
     # references, so treat published keys as permanent.
     key: str
-    label: str
     root: NormalizedUrl
 
     def __post_init__(self) -> None:
@@ -65,18 +64,12 @@ class ProviderEntry:
 
 KNOWN_PROVIDERS: tuple[ProviderEntry, ...] = (
     ProviderEntry(
-        key="simplefin-bridge",
-        label="SimpleFIN Bridge (beta)",
-        root=parse_root("https://beta-bridge.simplefin.org/simplefin"),
+        key="simplefin-bridge", root=parse_root("https://beta-bridge.simplefin.org/simplefin")
     ),
     ProviderEntry(
-        key="lunchflow",
-        label="Lunch Flow",
-        root=parse_root("https://www.lunchflow.app/api/simplefin-bridge"),
+        key="lunchflow", root=parse_root("https://www.lunchflow.app/api/simplefin-bridge")
     ),
-    ProviderEntry(
-        key="redbark", label="Redbark", root=parse_root("https://api.redbark.com/simplefin")
-    ),
+    ProviderEntry(key="redbark", root=parse_root("https://api.redbark.com/simplefin")),
 )
 
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -69,7 +70,6 @@ base_url = "{BASE_URL}"
 
 [[custom_providers]]
 key = "{BLANK_KEY}"
-label = "SimpleFIN demo bridge, again"
 root = "https://beta-bridge.simplefin.org/simplefin"
 
 [[providers]]
@@ -89,8 +89,9 @@ def aggregator(*arguments: str, config_dir: Path, stdin: str = "") -> str:
     whole command line into its message.
     """
     completed = subprocess.run(  # noqa: S603  # no shell, and the program is fixed
-        [UV, "run", "simplefin-aggregator", *arguments, "--config-dir", str(config_dir)],
+        [UV, "run", "simplefin-aggregator", *arguments],
         input=stdin,
+        env={**os.environ, "SIMPLEFIN_AGGREGATOR_DIR": str(config_dir)},
         check=False,
         capture_output=True,
         text=True,
@@ -159,7 +160,8 @@ def expect(result: tuple[int, str], want: HTTPStatus, what: str) -> str:
 def serving(config_dir: Path) -> Generator[None]:
     """Run the real server for the duration of the block."""
     server = subprocess.Popen(  # noqa: S603  # no shell, and the program is fixed
-        [UV, "run", "simplefin-aggregator", "serve", "--config-dir", str(config_dir)]
+        [UV, "run", "simplefin-aggregator", "serve"],
+        env={**os.environ, "SIMPLEFIN_AGGREGATOR_DIR": str(config_dir)},
     )
     try:
         for _ in range(50):
@@ -206,14 +208,10 @@ def run(demo_setup_tokens: tuple[str, str], config_dir: Path) -> None:
     for key, demo_setup_token in zip((PREFIXED_KEY, BLANK_KEY), demo_setup_tokens, strict=True):
         print(f"==> Claiming a SimpleFIN demo setup token as {key}")
         # On stdin, which `claim` prompts for, rather than as an argument.
-        _ = aggregator(
-            "claim", "--provider", key, config_dir=config_dir, stdin=f"{demo_setup_token}\n"
-        )
+        _ = aggregator("claim", key, config_dir=config_dir, stdin=f"{demo_setup_token}\n")
 
     print("==> Issuing a setup token for this run")
-    setup_token = aggregator(
-        "app", "new", "--key", APP_KEY, "--label", "Manual verify", config_dir=config_dir
-    )
+    setup_token = aggregator("app", "new", APP_KEY, config_dir=config_dir)
     claim_url = base64.b64decode(setup_token).decode("ascii")
 
     with serving(config_dir):
@@ -270,7 +268,7 @@ def run(demo_setup_tokens: tuple[str, str], config_dir: Path) -> None:
         )
 
         print("==> Revoking the app, then asking again (expect 403, with no restart)")
-        _ = aggregator("app", "revoke", "--key", APP_KEY, config_dir=config_dir)
+        _ = aggregator("app", "revoke", APP_KEY, config_dir=config_dir)
         _ = expect(
             request(f"{BASE_URL}/simplefin/accounts", auth=auth),
             HTTPStatus.FORBIDDEN,

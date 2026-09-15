@@ -35,11 +35,10 @@ chmod 600 ~/.config/simplefin-aggregator/config.toml
 $EDITOR ~/.config/simplefin-aggregator/config.toml
 ```
 
-Pass `--config-dir /path/to/dir` to invocations of
-simplefin-aggregator if you did not use the default directory. The
-`config.toml` in this repository is a template to copy: edit the copy in your
-config directory, since the one here is a tracked file that `git` will happily
-revert or commit.
+Set the `SIMPLEFIN_AGGREGATOR_DIR` environment variable if you did not use the
+default directory. The `config.toml` in this repository is a template to
+copy: edit the copy in your config directory, since the one here is a tracked
+file that `git` will happily revert or commit.
 
 `[[providers]]` names the providers to aggregate, by key:
 
@@ -64,15 +63,15 @@ a third party that isn't built in, or a bridge you run yourself:
 ```toml
 [[custom_providers]]
 key = "my-bridge"
-label = "My Own Bridge"
 root = "https://simplefin.example.com/simplefin"
 
 [[providers]]
 key = "my-bridge"
 ```
 
-`key` is the name you refer to it by; it must match `[a-z0-9-]+` and
-must be unique.  `root` (with `/` appended if it is not specified) is
+`key` is the name you refer to it by; it must match `[a-z0-9][a-z0-9-]*` and
+must be unique. It is also what the claim menu shows for this provider.
+`root` (with `/` appended if it is not specified) is
 the prefix of the provider's claim and access URLs. It must be
 `https`, unless the host is a literal loopback IP address such as
 `127.0.0.1` or `[::1]`.
@@ -86,11 +85,12 @@ saying "yes" to "trust this site?"
 setup token you issue embeds it, so it has to be ASCII: give an
 internationalized host in its encoded form.
 
-**`config.toml` holds no credentials.** Keep it readable only by its owner
-anyway — anyone who can write it can move `bind_host` off the loopback
-interface. The same goes double for the directory it sits in: a directory
-another local user can write lets them replace the files this application
-depends on, and every command that writes there will warn you about it.
+**`config.toml` holds no credentials**, but keep it accessible only to its
+owner: anyone who can write it can move `bind_host` off the loopback interface
+or add a provider root of their own, and anyone who can write the directory it
+sits in can replace the files this application depends on. Commands that load
+`config.toml` or write to that directory warn you when either is open to other
+users.
 
 #### Account ids and prefixes
 
@@ -152,12 +152,12 @@ of them. This has these consequences:
 For each of your providers: Get a one-time-use setup token, then:
 
 ```sh
-uv run simplefin-aggregator claim --provider <key>
+uv run simplefin-aggregator claim [<key>]
 ```
 
 `claim` prompts for the setup token, uses it to obtain an access URL, and
 stores that in `provider_creds.json` in the config directory. It asks which
-provider the token came from unless `--provider <key>` tells it. Naming the
+provider the token came from unless `<key>` tells it. Naming the
 wrong provider is an error rather than a guess: the access URL a provider
 returns has to sit under the root that key names.
 
@@ -169,7 +169,7 @@ The prompt hides what you type. To run `claim` without a terminal, redirect a
 file instead:
 
 ```sh
-uv run simplefin-aggregator claim --provider <key> < token-file
+uv run simplefin-aggregator claim <key> < token-file
 ```
 
 **`provider_creds.json` cannot be regenerated.** A setup token is
@@ -183,22 +183,22 @@ new key.
 ### 3. Issue your client app a setup token
 
 ```sh
-uv run simplefin-aggregator app new --key actual-budget --label "Actual Budget"
+uv run simplefin-aggregator app new actual-budget
 ```
 
-`--key` names the app in `app list` and `app revoke`, and must match
-`[a-z0-9-]+`. The command prints a base64 setup token on stdout and nothing
+The key names the app in `app list` and `app revoke`, and must match
+`[a-z0-9][a-z0-9-]*`. The command prints a base64 setup token on stdout and nothing
 else — the same shape a real SimpleFIN provider hands out — so `$(...)`
 captures it cleanly.
 
 **It is shown once.** The aggregator stores a SHA-256 digest of it and nothing
 else, so it cannot be printed again; if you lose it before the app claims it,
-run `app regen --key actual-budget` for a fresh one.
+run `app regen actual-budget` for a fresh one.
 
 ### 4. Run the server
 
 ```sh
-uv run simplefin-aggregator serve [--config-dir <dir>]
+uv run simplefin-aggregator serve
 ```
 
 This starts serving on `bind_host:bind_port` (default `127.0.0.1:8080`). It
@@ -221,20 +221,20 @@ could tell the two apart.
 
 ```sh
 uv run simplefin-aggregator app list
-uv run simplefin-aggregator app revoke --key <key>
-uv run simplefin-aggregator app regen  --key <key>
+uv run simplefin-aggregator app revoke <key>
+uv run simplefin-aggregator app regen  <key>
 ```
 
-`app list` shows each app's key, label, status and timestamps. It cannot show
-you a credential, because the store holds none: everything in it is a digest,
+`app list` shows each app's key, status and timestamps. It cannot show you a
+credential, because the store holds none: everything in it is a digest,
 verified against what an app presents and never reproduced.
 
 `app revoke` removes an app. Its credentials stop working on the next request
 — the server reads the store every time, so there is nothing to restart.
 
-`app regen` issues an app a new setup token, keeping its key and label. Whatever
-it held before — live credentials or an unclaimed token — stops working
-immediately. This is the only way to reuse a key.
+`app regen` issues an app a new setup token, keeping its key. Whatever it held
+before — live credentials or an unclaimed token — stops working immediately.
+This is the only way to reuse a key.
 
 **`aggregator_creds.json` is disposable.** Losing it costs one fresh setup
 token per client app, which is a different situation from
@@ -290,13 +290,14 @@ docker run --rm \
 owner-only permissions work the same as outside Docker.
 
 To claim a provider's token from inside the container instead of on the host,
-override the command:
+override the default aggregator command; the image already sets
+`SIMPLEFIN_AGGREGATOR_DIR=/config`:
 
 ```sh
 docker run --rm -it \
   -v "$HOME/.config/simplefin-aggregator:/config" \
   --user "$(id -u):$(id -g)" \
-  simplefin-aggregator claim --config-dir /config
+  simplefin-aggregator claim
 ```
 
 ## Limitations

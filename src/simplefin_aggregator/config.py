@@ -8,6 +8,7 @@ it.
 
 from __future__ import annotations
 
+import os
 import re
 import tomllib
 from dataclasses import dataclass
@@ -104,7 +105,6 @@ class CustomProvider(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     key: str
-    label: str
     root: str
 
     @field_validator("root")
@@ -121,9 +121,7 @@ class CustomProvider(BaseModel):
 
     def as_provider_entry(self) -> ProviderEntry:
         """Convert to a registry entry, validating the key and the root."""
-        return ProviderEntry(
-            key=self.key, label=self.label, root=_parse_root_or_value_error(self.root)
-        )
+        return ProviderEntry(key=self.key, root=_parse_root_or_value_error(self.root))
 
 
 class _ConfigModel(BaseModel):
@@ -265,14 +263,28 @@ def config_from_mapping(data: Mapping[str, object]) -> Config:
 CONFIG_FILENAME = "config.toml"
 
 
+# The one environment variable that selects the directory. Read in `config_dir`
+# alone; every other place that needs the directory calls that, or one of the
+# `*_path` functions built on it, rather than reading the variable itself.
+DIR_ENV_VAR = "SIMPLEFIN_AGGREGATOR_DIR"
+
+
 def default_config_dir() -> Path:
     return Path(user_config_dir(APP_NAME))
 
 
-def config_path(config_dir: Path | None = None) -> Path:
-    """Where config.toml lives: in `config_dir`, or the platform default."""
-    directory = config_dir if config_dir is not None else default_config_dir()
-    return directory / CONFIG_FILENAME
+def config_dir() -> Path:
+    """Where this application's on-disk state lives.
+
+    `DIR_ENV_VAR` if set, else the platform default.
+    """
+    from_env = os.environ.get(DIR_ENV_VAR)
+    return Path(from_env) if from_env else default_config_dir()
+
+
+def config_path(directory: Path | None = None) -> Path:
+    """Where config.toml lives: in `directory`, or where `config_dir()` resolves."""
+    return (directory if directory is not None else config_dir()) / CONFIG_FILENAME
 
 
 def load_config(path: Path) -> Config:
