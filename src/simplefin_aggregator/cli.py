@@ -104,7 +104,7 @@ def _resolve_provider(entries: Sequence[ProviderEntry], key: str | None) -> Prov
         return find_provider(entries, key)
     except ProviderRegistryError:
         # Not the error's message, which names the key: see claim for why an
-        # unknown provider argument is not repeated.
+        # unknown provider argument is not echoed.
         known = ", ".join(entry.key for entry in entries)
         not_listed = (
             f"A provider that is not one of those needs a [[custom_providers]] entry in "
@@ -237,7 +237,7 @@ def claim(
 ) -> None:
     """Claim a one-time SimpleFIN setup token and store the access URL it returns."""
     # A setup token could plausibly be pasted as an argument rather than at the
-    # prompt. So that no error repeats it:
+    # prompt. So that no error echoes it:
     #
     # 1. An extra argument: allow_extra_args stops typer rejecting it with an
     #    error that quotes it, and it is refused here instead.
