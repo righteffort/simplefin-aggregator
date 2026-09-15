@@ -103,8 +103,8 @@ def _resolve_provider(entries: Sequence[ProviderEntry], key: str | None) -> Prov
     try:
         return find_provider(entries, key)
     except ProviderRegistryError:
-        # Not the error's message, which names the key: see claim for why an
-        # unknown provider argument is not echoed.
+        # Do not use the error's message, which includes key. The comment below
+        # in claim explains why this is necessary.
         known = ", ".join(entry.key for entry in entries)
         not_listed = (
             f"A provider that is not one of those needs a [[custom_providers]] entry in "
@@ -241,7 +241,7 @@ def claim(
     #
     # 1. An extra argument: allow_extra_args stops typer rejecting it with an
     #    error that quotes it, and it is refused here instead.
-    # 2. The provider argument: _resolve_provider does not name an unknown one.
+    # 2. The provider argument: _resolve_provider's error message does not include it.
     if ctx.args:
         _fail("error: claim takes at most one argument, the provider key.")
     loaded_config = _load_config_or_exit()
