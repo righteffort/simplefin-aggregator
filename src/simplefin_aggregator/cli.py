@@ -63,21 +63,6 @@ app = typer.Typer(
 )
 
 
-# Longer than the probe's: a read timeout comes after the POST has gone out,
-# when the provider may have spent the token on a reply that never arrives.
-_CLAIM_TIMEOUT = httpx2.Timeout(30.0)
-
-
-def _build_claim_client() -> httpx2.Client:
-    """Overridden in tests to inject an httpx2.MockTransport."""
-    return httpx2.Client(timeout=_CLAIM_TIMEOUT, follow_redirects=False)
-
-
-def _stdin_is_a_terminal() -> bool:
-    """Overridden in tests: CliRunner's stdin is never a real terminal."""
-    return sys.stdin.isatty()
-
-
 def _fail(*lines: str) -> NoReturn:
     """Report an error on stderr and exit non-zero."""
     for line in lines:
@@ -128,6 +113,11 @@ def _resolve_provider(entries: Sequence[ProviderEntry], key: str | None) -> Prov
         _fail(f"error: unknown provider; known providers are: {known}.", not_listed)
 
 
+def _stdin_is_a_terminal() -> bool:
+    """Overridden in tests: CliRunner's stdin is never a real terminal."""
+    return sys.stdin.isatty()
+
+
 def _decode_setup_token(setup_token: str) -> str:
     """Decode a setup token to the claim URL it carries, unvalidated.
 
@@ -149,6 +139,16 @@ def _decode_setup_token(setup_token: str) -> str:
         # Not the exception text: it quotes the offending bytes, which are
         # whatever the token decoded to.
         _fail("error: decoded setup token is not ASCII, so it is not a URL")
+
+
+# Longer than the probe's: a read timeout comes after the POST has gone out,
+# when the provider may have spent the token on a reply that never arrives.
+_CLAIM_TIMEOUT = httpx2.Timeout(30.0)
+
+
+def _build_claim_client() -> httpx2.Client:
+    """Overridden in tests to inject an httpx2.MockTransport."""
+    return httpx2.Client(timeout=_CLAIM_TIMEOUT, follow_redirects=False)
 
 
 def _claim_access_url(claim_url: NormalizedUrl, entry: ProviderEntry) -> str:
@@ -322,6 +322,12 @@ app_commands = typer.Typer(
 app.add_typer(app_commands, name="app")
 
 
+def _check_key(key: str) -> None:
+    """Reject a key the app token store cannot be keyed by."""
+    if not KEY_PATTERN.fullmatch(key):
+        _fail(f"error: key {key!r} must match {KEY_PATTERN.pattern}")
+
+
 def _writable_store_or_exit() -> Path:
     """Where the store lives, having reported anything about the directory first."""
     store_path = app_tokens_path()
@@ -330,12 +336,6 @@ def _writable_store_or_exit() -> Path:
     except StateFileError as exc:
         _fail(f"error: {exc}")
     return store_path
-
-
-def _check_key(key: str) -> None:
-    """Reject a key the app token store cannot be keyed by."""
-    if not KEY_PATTERN.fullmatch(key):
-        _fail(f"error: key {key!r} must match {KEY_PATTERN.pattern}")
 
 
 def _print_setup_token(base_url: str, claim_secret: str, key: str, store_path: Path) -> None:
@@ -446,16 +446,6 @@ def app_regen(key: Annotated[str, typer.Argument(help="The app's key.")]) -> Non
     _print_setup_token(loaded_config.base_url, claim_secret, key, store_path)
 
 
-def _build_app_or_exit(loaded_config: Config) -> FastAPI:
-    try:
-        access_urls = load_access_urls(provider_creds_path())
-        return create_app(loaded_config, access_urls, app_tokens_path())
-    except (StateFileError, UrlValidationError) as exc:
-        _fail(f"error: {exc}")
-    except ProviderAccessUrlError as exc:
-        _fail(*(f"error: {message}" for message in exc.messages))
-
-
 def _check_app_store_or_exit() -> None:
     """Fail before uvicorn starts if the store cannot be read or written.
 
@@ -479,6 +469,16 @@ def _check_app_store_or_exit() -> None:
             "Issue one with `app new <key>`."
         )
         typer.echo(no_apps, err=True)
+
+
+def _build_app_or_exit(loaded_config: Config) -> FastAPI:
+    try:
+        access_urls = load_access_urls(provider_creds_path())
+        return create_app(loaded_config, access_urls, app_tokens_path())
+    except (StateFileError, UrlValidationError) as exc:
+        _fail(f"error: {exc}")
+    except ProviderAccessUrlError as exc:
+        _fail(*(f"error: {message}" for message in exc.messages))
 
 
 @app.command()
