@@ -450,10 +450,11 @@ and issuing the first app its token.
 
 ```text
 cli.claim
+  -> refuse extra arguments                  # never quoting them
   -> _load_config_or_exit()                  # claim needs a fully valid config, like serve
   -> load_access_urls(...) + check_can_save(...)   # BEFORE the token is spent
   -> _resolve_provider(config.provider_entries(), provider)
-       provider given   -> _check_key + find_provider    # named, so exact; never fuzzy
+       provider given   -> find_provider    # named, so exact; never fuzzy; never echoed
        otherwise        -> numbered menu; no default, no free-text host
   -> prompt for the token, hidden if stdin is a real terminal
   -> _decode_setup_token  -> validate_claim_url(entry.root, ...)   # BEFORE any network call
@@ -476,9 +477,10 @@ The property: **the provider is named or chosen, never defaulted.** Which root
 the token is matched against is the whole of the phishing defense, so it is the
 user's deliberate answer either way — naming it on the command line is as
 deliberate as picking from the menu, and an unknown key is an error rather than
-a guess. A provider key failing the key pattern is rejected without being
-echoed, for the reason an app key is: a mistyped one is most often a pasted setup
-token.
+a guess. An unknown provider or an extra argument is refused without being
+echoed, because it could plausibly be a setup token pasted onto the command
+line instead of at the prompt. An unknown option is still reported in the
+parser's own words, token and all.
 
 The orderings:
 
@@ -506,7 +508,7 @@ used elsewhere in this codebase.
 ```text
 cli.app_new(key)
   -> _load_config_or_exit()                     # for base_url
-  -> _check_key(key)                            # rejected keys are never named back
+  -> _check_key(key)                            # [a-z0-9-]+, naming a rejected key
   -> _writable_store_or_exit()                  # directory writable, and warn if shared
   -> update_app_tokens(store):                  # one locked read-modify-write
        key already present -> exit 1, naming `app regen`, store untouched
@@ -516,12 +518,10 @@ cli.app_new(key)
   -> "shown once" note -> stderr
 ```
 
-Three orderings here are load-bearing. The duplicate check is *inside* the
+Two orderings here are load-bearing. The duplicate check is *inside* the
 lock, or it answers from a version another writer is already replacing. The
 token is printed *after* the store is written, because a token this aggregator
-has no record of looks to the user like a working setup that never syncs. And
-a rejected key is not echoed, because a mistyped one is most often a
-pasted setup token and base64 is exactly what `[a-z0-9-]+` rejects.
+has no record of looks to the user like a working setup that never syncs.
 
 `app regen` is the same flow over an existing record. `app revoke` deletes the
 record outright. Neither leaves an app holding a live credential and an
@@ -748,13 +748,6 @@ Basic Auth password in a debug log. Nothing here sets a log level, so those
 records reach no one who did not turn DEBUG on themselves. Clamping `httpcore2`
 in `serve` would close it and would also silence an operator who deliberately
 asked for it, so the gap is left open.
-
-A sixth rule has no single home because it applies at every command boundary:
-**a value the user typed is not safe to echo just because they typed it.** A
-mistyped key is most often a pasted setup token, so `_check_key` rejects it
-without naming it, and `claim` declines to quote a setup token it could not
-decode. Repeating the value would put a secret on stderr in order to tell the
-user something they already know.
 
 **Credentials reach a provider only through `auth=`, never through a URL.**
 Keep it that way: it is what leaves a request's own URL free of secrets, on

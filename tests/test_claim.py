@@ -591,13 +591,33 @@ def test_a_provider_no_entry_defines_is_refused_before_the_token_is_spent(
     assert _stored(tmp_path) == {}
 
 
-def test_a_provider_key_that_is_a_pasted_secret_does_not_come_back_on_stderr(
+def test_a_setup_token_given_as_the_provider_does_not_come_back_on_stderr(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
-    """A mistyped provider key is as likely to be a pasted setup token as an app key is."""
+    """Requirement: a provider argument claim does not know is refused without being repeated."""
     result = _run_claim_with_provider(tmp_path, SETUP_TOKEN)
 
     assert result.exit_code == 1
+    assert "unknown provider" in result.stderr
+    assert SETUP_TOKEN not in result.stderr
+    assert SETUP_TOKEN not in result.stdout
+    assert claim_succeeds == []
+
+
+def test_a_setup_token_given_after_the_provider_does_not_come_back_on_stderr(
+    tmp_path: Path, claim_succeeds: list[str]
+) -> None:
+    """Requirement: an extra argument is refused without being repeated, before anything is read."""
+    _ = _write_config(tmp_path)
+    result = runner.invoke(
+        cli.app,
+        ["claim", PROVIDER_KEY, SETUP_TOKEN],
+        input=f"{SETUP_TOKEN}\n",
+        env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)},
+    )
+
+    assert result.exit_code == 1
+    assert "at most one argument" in result.stderr
     assert SETUP_TOKEN not in result.stderr
     assert SETUP_TOKEN not in result.stdout
     assert claim_succeeds == []

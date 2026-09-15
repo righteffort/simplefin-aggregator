@@ -115,11 +115,17 @@ def _resolve_provider(entries: Sequence[ProviderEntry], key: str | None) -> Prov
     if key is None:
         return _select_provider(entries)
 
-    _check_key(key, "provider")
     try:
         return find_provider(entries, key)
-    except ProviderRegistryError as exc:
-        _fail(f"error: {exc}")
+    except ProviderRegistryError:
+        # Not the message, which names the key: see claim for why nothing typed
+        # on its command line is repeated.
+        known = ", ".join(entry.key for entry in entries)
+        not_listed = (
+            f"A provider that is not one of those needs a [[custom_providers]] entry in "
+            f"{config_path()}."
+        )
+        _fail(f"error: unknown provider; known providers are: {known}.", not_listed)
 
 
 def _decode_setup_token(setup_token: str) -> str:
@@ -225,9 +231,16 @@ def _probe_access_url(access_url: NormalizedUrl) -> str | None:
     return f"{access_url.origin} answered HTTP {response.status_code}"
 
 
-@app.command()
-def claim(provider: Annotated[str | None, typer.Argument(help="Provider key.")] = None) -> None:
+@app.command(context_settings={"allow_extra_args": True})
+def claim(
+    ctx: typer.Context, provider: Annotated[str | None, typer.Argument(help="Provider key.")] = None
+) -> None:
     """Claim a one-time SimpleFIN setup token and store the access URL it returns."""
+    # Nothing typed on this command line is repeated in an error: it could
+    # plausibly be a setup token pasted there rather than at the prompt. So the
+    # parser, which would quote an extra argument, accepts it and this refuses it.
+    if ctx.args:
+        _fail("error: claim takes at most one argument, the provider key.")
     loaded_config = _load_config_or_exit()
     store_path = provider_creds_path()
 
@@ -316,17 +329,10 @@ def _writable_store_or_exit() -> Path:
     return store_path
 
 
-def _check_key(key: str, argument: str = "key") -> None:
-    """Reject a key the stores cannot be keyed by, without repeating it back.
-
-    A mistyped key is most often a pasted setup token, which is a secret and
-    which this pattern rejects because base64 is not in it. Naming the value
-    would put that token on stderr to tell the user something they just typed.
-    Every message past this check may name a key, since one that got here
-    matched.
-    """
+def _check_key(key: str) -> None:
+    """Reject a key the app token store cannot be keyed by."""
     if not KEY_PATTERN.fullmatch(key):
-        _fail(f"error: {argument} must match {KEY_PATTERN.pattern}")
+        _fail(f"error: key {key!r} must match {KEY_PATTERN.pattern}")
 
 
 def _print_setup_token(base_url: str, claim_secret: str, key: str, store_path: Path) -> None:

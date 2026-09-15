@@ -389,20 +389,19 @@ def test_a_base_url_no_token_could_carry_is_refused_before_a_record_exists(tmp_p
     assert not app_tokens_path(tmp_path).exists()
 
 
-def test_a_key_that_is_a_pasted_secret_does_not_come_back_on_stderr(tmp_path: Path) -> None:
-    """A mistyped key is most often a setup token, and the constraint rejects it.
-
-    Repeating the value would put a secret on stderr in order to tell the user
-    what they had just typed.
-    """
+def test_a_rejected_key_is_named(tmp_path: Path) -> None:
+    """Requirement: a key outside the pattern is refused, naming the key and the pattern."""
     _write_config(tmp_path)
-    pasted = base64.b64encode(f"{BASE_URL}/simplefin/claim/s3cret-marker".encode()).decode()
 
-    for arguments in (("new", pasted), ("revoke", pasted), ("regen", pasted)):
+    for arguments in (
+        ("new", "Actual_Budget"),
+        ("revoke", "Actual_Budget"),
+        ("regen", "Actual_Budget"),
+    ):
         result = _run(tmp_path, *arguments)
         assert result.exit_code == 1, arguments
-        assert pasted not in result.stderr, arguments
-        assert "s3cret-marker" not in result.stderr, arguments
+        assert "'Actual_Budget'" in result.stderr, arguments
+        assert "[a-z0-9-]+" in result.stderr, arguments
         assert result.stdout == "", arguments
 
 
