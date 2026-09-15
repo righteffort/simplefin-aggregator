@@ -103,8 +103,8 @@ def _resolve_provider(entries: Sequence[ProviderEntry], key: str | None) -> Prov
     try:
         return find_provider(entries, key)
     except ProviderRegistryError:
-        # Not the error's message, which names the key: see claim for why
-        # nothing typed on its command line is repeated.
+        # Not the error's message, which names the key: see claim for why an
+        # unknown provider argument is not repeated.
         known = ", ".join(entry.key for entry in entries)
         not_listed = (
             f"A provider that is not one of those needs a [[custom_providers]] entry in "
