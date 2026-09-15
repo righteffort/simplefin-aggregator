@@ -107,7 +107,7 @@ def find_provider(providers: Sequence[ProviderEntry], key: str) -> ProviderEntry
             return provider
     known = ", ".join(provider.key for provider in providers)
     msg = (
-        f"unknown provider {key!r}; known providers are: {known}. "
+        f"unknown provider; known providers are {known}. "  # Elide key in case it is a pasted token
         "A provider that is not one of those needs a [[custom_providers]] entry in the config file."
     )
     raise ProviderRegistryError(msg)
