@@ -225,8 +225,7 @@ def claim(
     loaded_config = _load_config_or_exit()
     store_path = provider_creds_path()
 
-    # Before the token is spent, since a file problem found after the POST is a
-    # lost credential: the token cannot be claimed a second time.
+    # Don't claim the one-time-use setup token if the resulting access URL can't be written.
     try:
         _ = load_access_urls(store_path)
         check_can_save(store_path)
@@ -248,20 +247,13 @@ def claim(
     token = cast(str, typer.prompt("Setup token", hide_input=_stdin_is_a_terminal()))
 
     try:
-        # Before the POST, not after: a host you contact has already learned
-        # your egress IP and that the token is live, however you treat its
-        # reply.
+        # Do not send the token to a mismatched host.
         claim_url = validate_claim_url(entry.root, _decode_setup_token(token), provider=entry.key)
     except UrlValidationError as exc:
-        # Phrased as a checklist rather than a diagnosis, because every reason
-        # validate_claim_url rejects a URL arrives as the same exception, and
-        # there is deliberately no code on it to tell them apart. The token is
-        # unspent whichever it was: validation runs before the POST.
         what_to_check = (
-            f"Nothing was claimed and the setup token is still unspent. Check that you "
-            f"pasted the whole token and that it came from {entry.key}; a provider "
-            f"the menu does not list needs a [[custom_providers]] entry in "
-            f"{config_path()} before its tokens can be claimed."
+            "The setup token is still valid. Check that you pasted the whole token and that it "
+            f"came from {entry.key}. If it came from a provider not in the menu, you need to add "
+            f"a [[custom_providers]] entry in {config_path()}."
         )
         _fail(f"error: {exc}", what_to_check)
 
@@ -282,17 +274,12 @@ def claim(
     typer.echo(f"Claimed provider {entry.key!r}.")
     typer.echo(f"note: its access URL is now in {store_path}.", err=True)
 
-    # A warning, not a failure: the access URL is stored and valid, and the
-    # setup token is spent and cannot be re-claimed if this exits non-zero.
     probe_failure = _probe_access_url(validated_access_url)
     if probe_failure is not None:
         could_not_confirm = f"warning: could not confirm the access URL works ({probe_failure})"
         typer.echo(f"{could_not_confirm}; it is stored anyway.", err=True)
 
     if entry.key not in {provider.key for provider in loaded_config.providers}:
-        # serve reads the store by the key its config names, so a
-        # claim the config does not reference would otherwise look like a
-        # success and then fail at startup with "claim one first".
         unreferenced = (
             f"warning: no [[providers]] entry in {config_path()} names "
             f"key {entry.key!r}, so serve will not use this access URL."

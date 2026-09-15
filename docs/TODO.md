@@ -7,13 +7,22 @@
   for devs who want to smoketest simplefin-aggregator from the command line
   would be nice
 - add a quickstart section to the top of the README
-  - maybe add an actualbudget+lunchmoney quickstpart section to the top of the
+- maybe add an actualbudget+lunchmoney quickstart section to the top of the
   README
+- ARCHITECTURE.md is chock-full of reciting what the code does rather than
+  explaining principles, structure, why is the way it is, etc.
+- In general the prose is terrible.
 
 # Medium-term fit and finish
 - ship a docker image righteffort/simplefin-aggregator
 - ship a python package similarly
 - maybe: provide an example docker_compose.yml .. currently in .notes/docker-compose-example.yml
+
+# Questions
+- Do we check permissions on the chain of directories from a symlinked config file to the real file?
+- Why is
+  `test_url_validation.py:test_mismatch_message_withholds_the_setup_token`
+  docstring "The paste-error case..." ?
 
 # Other future work
 

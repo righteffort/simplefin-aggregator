@@ -128,9 +128,6 @@ def load_state_file[ModelT: BaseModel](
     worse.
     """
     try:
-        # utf-8, not the locale's, on both the read and the write below: JSON
-        # is UTF-8 by definition, and a locale change must not be able to make
-        # a file this application wrote unreadable.
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         raw = "{}"
@@ -139,7 +136,7 @@ def load_state_file[ModelT: BaseModel](
         raise StateFileError(msg) from exc
     except UnicodeDecodeError:
         # Not the exception text: it quotes the byte it choked on, and these
-        # files are credential-adjacent.
+        # files may hold credentials.
         msg = f"{path} is not UTF-8 text"
         raise StateFileError(msg) from None
     else:

@@ -114,8 +114,8 @@ def test_accounts_relays_every_key_a_provider_sent_inside_an_account(tmp_path: P
     )
 
 
-def test_accounts_forwards_repeated_account_params(tmp_path: Path) -> None:
-    """Requirement: a filter naming several accounts reaches the provider naming all of them."""
+def test_accounts_forwards_multiple_account_params(tmp_path: Path) -> None:
+    """Requirement: a filter naming multiple accounts reaches the provider naming all of them."""
     received_params: list[tuple[str, str]] = []
 
     async def handler(request: httpx2.Request) -> httpx2.Response:

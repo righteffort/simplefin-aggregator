@@ -390,7 +390,7 @@ def test_claim_says_the_token_is_unspent_when_the_claim_url_is_unparseable(
 
     assert result.exit_code == 1
     assert claim_succeeds == []
-    assert "still unspent" in result.stderr
+    assert "token is still valid" in result.stderr
 
 
 def test_claim_with_a_token_decoding_to_non_ascii_fails(
@@ -417,7 +417,7 @@ def test_claim_rejects_a_claim_url_outside_the_selected_root_before_any_request(
     assert claim_succeeds == [], "a hostile host must not learn the token is live"
     assert "https://provider.example.com.evil.test is not valid" in result.stderr
     assert "some-setup-token" not in result.output, "the token is still unclaimed"
-    assert "still unspent" in result.stderr
+    assert "is still valid" in result.stderr
     assert "[[custom_providers]]" in result.stderr
     assert str(tmp_path / "config.toml") in result.stderr
 

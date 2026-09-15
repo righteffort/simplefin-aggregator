@@ -28,7 +28,7 @@ Three rules, each with a limit worth knowing:
    resolved.
 
 3. Messages do not print secrets -- an access URL's credentials, a claim URL's
-   setup token. Best effort rather than a guarantee: see `UrlValidationError`.
+   setup token. Best effort, not a guarantee: see `UrlValidationError`.
 """
 
 from __future__ import annotations
