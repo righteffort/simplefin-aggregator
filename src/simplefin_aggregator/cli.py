@@ -113,7 +113,7 @@ def _decode_setup_token(setup_token: str) -> str:
     except ValueError as exc:
         # binascii.Error (bad padding, and with it bad length) subclasses
         # ValueError, as does a token with non-ASCII characters in it.
-        _fail(f"error: setup token is not valid base64: {exc}")
+        _fail(f"error: pasted setup token is not valid base64: {exc}")
 
     try:
         return claim_url_bytes.decode("ascii")

@@ -130,7 +130,7 @@ class _ConfigModel(BaseModel):
     """The config file as written, before any field is resolved."""
 
     bind_host: str = "127.0.0.1"
-    bind_port: int = 8080
+    bind_port: int = 5026
     providers: list[_ProviderFileEntry] = Field(min_length=1)
     custom_providers: list[CustomProvider] = []
     base_url: str

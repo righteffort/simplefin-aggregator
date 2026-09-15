@@ -203,7 +203,7 @@ run `app regen actual-budget` for a fresh one.
 uv run simplefin-aggregator serve
 ```
 
-This starts serving on `bind_host:bind_port` (default `127.0.0.1:8080`). It
+This starts serving on `bind_host:bind_port` (default `127.0.0.1:5026`). It
 refuses to start if `aggregator_creds.json` cannot be read or its directory
 cannot be written, and warns if no app has been issued a token yet.
 
@@ -279,10 +279,13 @@ The image contains only the application. Mount your config directory at
 server binds the container's own loopback and the published port reaches
 nothing. Publishing to `127.0.0.1`, as below, keeps it off the network.
 
+If you changed the port in `base_url` in your config, set EXTERNAL_PORT to that
+value before running `docker run` below.
+
 ```sh
 docker build -t simplefin-aggregator .
 docker run --rm \
-  -p 127.0.0.1:8080:8080 \
+  -p 127.0.0.1:${EXTERNAL_PORT:-5026}:5026 \
   -v "$HOME/.config/simplefin-aggregator:/config" \
   --user "$(id -u):$(id -g)" \
   simplefin-aggregator
@@ -307,8 +310,8 @@ docker run --rm -it \
 **POSIX only.** State files are locked with `fcntl.flock` and permissions are
 checked as Unix mode bits. There is no Windows fallback.
 
-**`base_url` is a literal loopback address, or HTTPS.** `http://127.0.0.1:8080`
-and `http://[::1]:8080` are accepted, because that traffic cannot leave the
+**`base_url` is a literal loopback address, or HTTPS.** `http://127.0.0.1:5026`
+and `http://[::1]:5026` are accepted, because that traffic cannot leave the
 machine. Everything else must be `https://` — `localhost` included, which is a
 name rather than an address and is rejected over http for that reason.
 

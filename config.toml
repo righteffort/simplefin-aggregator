@@ -2,11 +2,11 @@
 
 # 0.0.0.0 when running under Docker.
 bind_host = "127.0.0.1"
-bind_port = 8080
+bind_port = 5026
 
 # The URL this aggregator is reachable at from the client app. It is embedded
 # in every setup token `app new` prints, so it must be ASCII.
-base_url = "http://127.0.0.1:8080"
+base_url = "http://127.0.0.1:5026"
 
 # By default at most one entry in providers (below) can have prefix = "".
 # allow_multiple_blank_prefixes = false
