@@ -217,7 +217,7 @@ def _check_matches_root(root: NormalizedUrl, url: NormalizedUrl, kind: str, prov
     # still failing on a segment boundary ("https://h/simplefin-evil").
     if not (url.origin_and_path + "/").startswith(root.origin_and_path):
         # `provider` names the entry in the message. Pass a key from
-        # find_provider; ProviderEntry constrains those to [a-z0-9-]+.
+        # find_provider; ProviderEntry constrains those to [a-z0-9][a-z0-9-]*.
         msg = (
             f"{kind} {url.origin} is not valid for provider {provider!r}: "
             f"expected it to start with {root.origin_and_path}"

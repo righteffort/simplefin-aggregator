@@ -38,7 +38,7 @@ class ProviderRegistryError(ValueError):
     """
 
 
-KEY_PATTERN = re.compile(r"[a-z0-9-]+")
+KEY_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]*")
 """What a key may look like, for a provider here and for a client app.
 
 Both name a record in a store keyed by it and both are typed on a command

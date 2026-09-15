@@ -72,7 +72,7 @@ root = "https://simplefin.example.com/simplefin"
 key = "my-bridge"
 ```
 
-`key` is the name you refer to it by; it must match `[a-z0-9-]+` and
+`key` is the name you refer to it by; it must match `[a-z0-9][a-z0-9-]*` and
 must be unique.  `root` (with `/` appended if it is not specified) is
 the prefix of the provider's claim and access URLs. It must be
 `https`, unless the host is a literal loopback IP address such as
@@ -190,7 +190,7 @@ uv run simplefin-aggregator app new actual-budget
 ```
 
 The key names the app in `app list` and `app revoke`, and must match
-`[a-z0-9-]+`. The command prints a base64 setup token on stdout and nothing
+`[a-z0-9][a-z0-9-]*`. The command prints a base64 setup token on stdout and nothing
 else — the same shape a real SimpleFIN provider hands out — so `$(...)`
 captures it cleanly.
 

@@ -112,7 +112,7 @@ def test_custom_provider_root_is_rejected_with_a_reason(raw: str, expected: str)
         _ = parse_root(raw)
 
 
-BAD_KEYS = ["", "Redbark", "my bank", "my_bank", "café", "my-bridge\n", "a/b", "x\x1b[31m"]
+BAD_KEYS = ["", "-bank", "Redbark", "my bank", "my_bank", "café", "my-bridge\n", "a/b", "x\x1b[31m"]
 
 
 @pytest.mark.parametrize("key", BAD_KEYS)

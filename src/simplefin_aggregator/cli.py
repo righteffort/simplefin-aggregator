@@ -236,12 +236,8 @@ def claim(
     ctx: typer.Context, provider: Annotated[str | None, typer.Argument(help="Provider key.")] = None
 ) -> None:
     """Claim a one-time SimpleFIN setup token and store the access URL it returns."""
-    # A setup token could plausibly be pasted as an argument rather than at the
-    # prompt. So that no error echoes it:
-    #
-    # 1. An extra argument: allow_extra_args stops typer rejecting it with an
-    #    error that quotes it, and it is refused here instead.
-    # 2. The provider argument: _resolve_provider's error message does not include it.
+    # Do not use typer's default error message for extra args, in case the user
+    # accidentally invoked `claim <provider> <token>`.
     if ctx.args:
         _fail("error: claim takes at most one argument, the provider key.")
     loaded_config = _load_config_or_exit()

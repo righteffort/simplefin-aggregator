@@ -101,7 +101,7 @@ It does not run on the `.lock` sidecars, which hold nothing.
 The provider store is keyed by provider key because that is the one identifier
 `config.toml` and the store share; neither file has to name the other — which
 is why two accounts at one provider is a non-goal. The app token store is keyed
-by the key its command was given, constrained to `[a-z0-9-]+` at the
+by the key its command was given, constrained to `[a-z0-9][a-z0-9-]*` at the
 command and again in the model, so what `app list` prints is what this
 application could have written.
 
@@ -229,7 +229,7 @@ a plaintext credential on disk.
 ProviderEntry(key: str, label: str, root: NormalizedUrl)   # frozen
 ```
 
-`key` is constrained to `[a-z0-9-]+` in `__post_init__`, through which every
+`key` is constrained to `[a-z0-9][a-z0-9-]*` in `__post_init__`, through which every
 entry passes, config-supplied ones included — that is what makes a key safe to
 render in an error message and to use as a store key. **Published keys are
 permanent**: changing one orphans users' stored access URLs and breaks their
@@ -331,7 +331,7 @@ vanishing and a set of new ones appearing. Prefixes are as permanent as
 provider keys.
 
 The default, `f"{key}:"`, is prefix-free by construction: keys are unique and
-match `[a-z0-9-]+`, so no key plus a colon can be a prefix of another. An
+match `[a-z0-9][a-z0-9-]*`, so no key plus a colon can be a prefix of another. An
 explicit prefix is constrained to `[A-Za-z0-9._:-]*`, because it travels in a
 URL query parameter and lands in the client app's database and nothing is
 gained by allowing whitespace or `%` in it.
@@ -453,7 +453,7 @@ cli.claim
   -> refuse extra arguments                  # never quoting them
   -> _load_config_or_exit()                  # claim needs a fully valid config, like serve
   -> load_access_urls(...) + check_can_save(...)   # BEFORE the token is spent
-  -> _resolve_provider(config.provider_entries(), provider)
+  -> the provider, from config.provider_entries()
        provider given   -> find_provider    # named, so exact; never fuzzy; never echoed
        otherwise        -> numbered menu; no default, no free-text host
   -> prompt for the token, hidden if stdin is a real terminal
@@ -507,7 +507,7 @@ used elsewhere in this codebase.
 ```text
 cli.app_new(key)
   -> _load_config_or_exit()                     # for base_url
-  -> _check_key(key)                            # [a-z0-9-]+, naming a rejected key
+  -> _check_key(key)                            # [a-z0-9][a-z0-9-]*, naming a rejected key
   -> _writable_store_or_exit()                  # directory writable, and warn if shared
   -> update_app_tokens(store):                  # one locked read-modify-write
        key already present -> exit 1, naming `app regen`, store untouched
@@ -706,7 +706,7 @@ before touching anything credential-adjacent:
    `ConfigCheckError` and `ProviderRegistryError` — the checks that span
    providers, which run after validation and so cannot use that rendering. It
    interpolates their message directly, which is safe because both build their
-   text from provider keys alone, already constrained to `[a-z0-9-]+`. The
+   text from provider keys alone, already constrained to `[a-z0-9][a-z0-9-]*`. The
    catch names those two types rather than `ValueError`, so an unexpected one
    stays a traceback instead of being reported as the operator's config.
 4. **uvicorn's own access logger** — bypasses application-level logging
@@ -738,6 +738,10 @@ before touching anything credential-adjacent:
    the merge, and v1's `errors` strings are relayed verbatim. What this
    application does not do is write a string of its own into `errors`: that array
    holds only what the providers themselves reported.
+
+`claim` also keeps what is typed on its command line out of its errors: an
+extra argument is refused without being quoted, and an unknown provider is
+reported without being named. The `claim` flow says why.
 
 **A dependency's own logging is outside all five.** `httpcore2` traces each
 exchange at DEBUG, including the exception it is about to raise, and a protocol
