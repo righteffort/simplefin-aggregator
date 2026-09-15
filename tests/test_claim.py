@@ -590,11 +590,9 @@ def test_a_provider_no_entry_defines_is_refused_before_the_token_is_spent(
     assert _stored(tmp_path) == {}
 
 
-# TODO(claude): the test name implies specificity when the code is general. name it after the requirement as i revised it (and then you can drop the docstring imo since the name makes it self-documenting)
-def test_a_setup_token_given_as_the_provider_does_not_come_back_on_stderr(
+def test_claim_refuses_an_unknown_provider_argument_without_echoing_it(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
-    """Requirement: claim refuses and not does not echo an unknown provider arg."""
     result = _run_claim_with_provider(tmp_path, SETUP_TOKEN)
 
     assert result.exit_code == 1
@@ -604,11 +602,9 @@ def test_a_setup_token_given_as_the_provider_does_not_come_back_on_stderr(
     assert claim_succeeds == []
 
 
-# TODO(claude): as above
-def test_a_setup_token_given_after_the_provider_does_not_come_back_on_stderr(
+def test_claim_refuses_an_extra_argument_without_echoing_it(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
-    """Requirement: claim refuses and not does not echo an extra arg."""
     _ = _write_config(tmp_path)
     result = runner.invoke(
         cli.app,
