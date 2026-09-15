@@ -579,7 +579,7 @@ app.accounts(request)
   -> Response(body, 200, "application/json")
 ```
 
-**No provider hears another's account ids**, except among providers sharing
+**No provider receives another's account ids**, except among providers sharing
 the blank prefix, per "Account id namespacing". An `account` filter names ids
 in one provider's namespace, so each queried provider is given only the ids
 that resolved to it, alongside the parameters the request shares
@@ -588,7 +588,7 @@ iterating the configured providers rather than the requested ids, so two client
 apps asking for the same accounts in different orders are answered in the same
 order.
 
-**An id no prefix claims is the operator's news, not the client app's.** It is
+**An id no prefix claims is reported to the operator, not the client app.* It is
 logged, naming the id, and nothing about it reaches the response: repeating it
 there would put a value from outside into a body another program displays, and
 an entry that withholds it is a bare count naming nothing a client app could
@@ -712,8 +712,8 @@ before touching anything credential-adjacent:
 4. **uvicorn's own access logger** — bypasses application-level logging
    entirely. `access_log.py` (see its module docstring for why the filter
    matches on path prefix alone, with no notion of HTTP method) + the
-   `CLAIM_PATH_PREFIX`-based wiring in `cli.py`/`app.py` exists because uvicorn
-   was printing the raw setup token to stdout on every request against
+   `CLAIM_PATH_PREFIX`-based wiring in `cli.py`/`app.py` exists because without it uvicorn
+   would print the raw setup token to stdout on every request to
    `/simplefin/claim/{token}`, independent of anything the app itself logs. If
    a future route ever embeds a credential in its path, it needs the same
    treatment; if it only sends credentials via headers (like Basic Auth
