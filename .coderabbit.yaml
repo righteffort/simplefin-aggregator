@@ -14,10 +14,11 @@ reviews:
         Threat model: phishing and paste error. The user obtains a setup token
         from a provider's web page and pastes it into the CLI. A lookalike or
         Unicode-homograph domain yields a token pointing entirely at attacker
-        infrastructure; the CLI then stores an attacker-controlled access URL
-        and sends Basic Auth credentials to the attacker on every sync. The
-        only control that works is exact matching of provider URLs against a
-        fixed set of known-good origins (url_validation.py,
+        infrastructure; the CLI then stores an access URL on the attacker's
+        host, which answers every request made with it -- able to craft an
+        arbitrary HTTP response, and learning when and from where each request
+        is made. Exact matching of provider URLs against a fixed set of
+        known-good origins minimizes the risk (url_validation.py,
         provider_registry.py).
 
         Out of scope. Do not report these -- they address a different threat
@@ -33,13 +34,15 @@ reviews:
         - Softening the allowlist into a CLI flag or an interactive "add this
           origin?" prompt. A deliberate config-file edit is the only escape
           hatch, by design.
-        - Loosening the match to accept a URL that `httpx2.URL` does not
-          normalize to the root: a trailing dot on the host, an extra path
-          segment, a doubled slash. Provider-supplied URLs are normalized by
-          `httpx2.URL` -- the same type that later issues the request, which is
-          what makes the string matched and the string fetched the same one --
-          and anything that survives normalization is meant to fail to match
-          rather than be repaired.
+        - Loosening the match to accept a URL whose origin `httpx2.URL` does
+          not normalize to the provider's, such as a trailing dot on the host.
+          Provider-supplied URLs are normalized by `httpx2.URL` -- the same
+          type that later issues the request, which is what makes the origin
+          matched and the origin fetched the same one -- and anything that
+          survives normalization is meant to fail to match rather than be
+          repaired.
+        - Constraining the path of a claim or access URL, including "." and
+          ".." segments. Only the origin is matched, by design.
         - Dereferencing an account's `currency` field as a URL.
         - Treating a provider key or an account id as a secret. Neither is in
           the secret class above, and both are deliberately rendered. A
@@ -54,19 +57,23 @@ reviews:
           count, or a digest.
         - Multi-tenancy, rate limiting, and credential encryption at rest
           beyond correct file permissions.
+        - An error naming part of a malformed access URL's credentials, when
+          an unencoded "/", "?" or "#" in its password ends the authority
+          early. `UrlValidationError`'s docstring documents and accepts this
+          gap; do not propose generic messages to close it.
 
         Especially worth reporting:
         - Any path where an access URL, a setup token, or a Basic Auth
           password could reach a log line, an exception message, stdout, or a
-          pydantic ValidationError rendering. Only
-          `NormalizedUrl.origin_and_path`, which is credential-free, may be
-          rendered.
+          pydantic ValidationError rendering. Only `NormalizedUrl.origin` may
+          be rendered; `origin_and_path` holds a claim URL's setup token.
         - Local-filesystem exposure of the access URL store or config.toml:
           file modes, directory modes, symlink following, TOCTOU on write.
         - Any way a redirect could be followed, or a 3xx treated as success,
           on the claim POST or an /accounts GET.
-        - Errors in the prefix match in url_validation.py, particularly a
-          candidate URL that could match a root it should not.
+        - Errors in the origin match in url_validation.py, particularly a
+          candidate URL that could match an origin it should not, or whose
+          fetched origin could differ from the one matched.
 
     - path: "tests/**"
       instructions: |

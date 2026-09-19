@@ -35,13 +35,13 @@ base_url = "http://127.0.0.1:8080"
 # Before [[providers]] so that a test can cut the providers off the end.
 [[custom_providers]]
 key = "my-bank"
-root = "https://provider.example.com/simplefin"
+origin = "https://provider.example.com"
 
 [[providers]]
 key = "my-bank"
 """
 
-ROOT_LINE = 'root = "https://provider.example.com/simplefin"'
+ORIGIN_LINE = 'origin = "https://provider.example.com"'
 KEY_LINE = 'key = "my-bank"'
 
 
@@ -187,7 +187,7 @@ def _providers_toml(
         f"""
 [[custom_providers]]
 key = "{key}"
-root = "https://{key}.example.com/simplefin"
+origin = "https://{key}.example.com"
 """
         for key in dict.fromkeys(key for key, _ in entries)
     )
@@ -442,7 +442,7 @@ def test_provider_entries_are_the_built_in_ones_plus_the_config_s(tmp_path: Path
         *(entry.key for entry in KNOWN_PROVIDERS),
         "my-bank",
     ]
-    assert entries[-1].root.origin_and_path == "https://provider.example.com/simplefin/"
+    assert entries[-1].origin == "https://provider.example.com"
 
 
 def test_load_config_accepts_a_provider_key_naming_a_built_in_provider(tmp_path: Path) -> None:
@@ -479,31 +479,34 @@ def test_load_config_rejects_a_malformed_custom_provider_key(tmp_path: Path) -> 
         _ = load_config(path)
 
 
-CUSTOM_PROVIDER_ROOT_CASES = [
-    ("http://provider.example.com/simplefin", "must use https"),
-    ("https://user:pass@provider.example.com/simplefin", "must not contain credentials"),
-    ("https://provider.example.com:99999/simplefin", "not a valid URL"),
-    ("https://provider.example.com/simplefin?x=1", "query string or fragment"),
-    ("https://provider.example.com/simplefin#f", "query string or fragment"),
+CUSTOM_PROVIDER_ORIGIN_CASES = [
+    ("http://provider.example.com", "must use https"),
+    ("https://user:pass@provider.example.com", "must not contain credentials"),
+    ("https://provider.example.com:99999", "not a valid URL"),
+    ("https://provider.example.com/?x=1", "query string or fragment"),
+    ("https://provider.example.com#f", "query string or fragment"),
+    ("https://provider.example.com/simplefin", "must not have a path"),
     ("/simplefin", "has no host"),
 ]
 
 
-@pytest.mark.parametrize(("root", "expected"), CUSTOM_PROVIDER_ROOT_CASES)
-def test_load_config_rejects_a_bad_custom_provider_root(
-    tmp_path: Path, root: str, expected: str
+@pytest.mark.parametrize(("origin", "expected"), CUSTOM_PROVIDER_ORIGIN_CASES)
+def test_load_config_rejects_a_bad_custom_provider_origin(
+    tmp_path: Path, origin: str, expected: str
 ) -> None:
-    bad_root = VALID_TOML.replace(ROOT_LINE, f'root = "{root}"')
-    path = _write(tmp_path, bad_root)
+    bad_origin = VALID_TOML.replace(ORIGIN_LINE, f'origin = "{origin}"')
+    path = _write(tmp_path, bad_origin)
 
     with pytest.raises(ConfigError, match=expected):
         _ = load_config(path)
 
 
-def test_rejected_custom_provider_root_error_does_not_quote_the_credentials(tmp_path: Path) -> None:
-    """A rejected root is named in the error, but never by quoting the raw input back."""
-    root = "https://leak-username:leak-password@provider.example.com/simplefin"
-    path = _write(tmp_path, VALID_TOML.replace(ROOT_LINE, f'root = "{root}"'))
+def test_rejected_custom_provider_origin_error_does_not_quote_the_credentials(
+    tmp_path: Path,
+) -> None:
+    """A rejected origin is named in the error, but never by quoting the raw input back."""
+    origin = "https://leak-username:leak-password@provider.example.com"
+    path = _write(tmp_path, VALID_TOML.replace(ORIGIN_LINE, f'origin = "{origin}"'))
 
     with pytest.raises(ConfigError) as exc_info:
         _ = load_config(path)
@@ -513,17 +516,17 @@ def test_rejected_custom_provider_root_error_does_not_quote_the_credentials(tmp_
     assert "leak-password" not in message
     # Named as a fault of the entry, so a config with several says which one.
     # The field within it is not named: a location is rendered from the
-    # top-level model's fields alone, and `root` belongs to the nested one.
+    # top-level model's fields alone, and `origin` belongs to the nested one.
     assert "custom_providers.0" in message
 
 
-def test_load_config_accepts_a_loopback_http_custom_provider_root(tmp_path: Path) -> None:
-    """The one non-https root allowed: a provider on the loopback interface."""
-    loopback = VALID_TOML.replace(ROOT_LINE, 'root = "http://127.0.0.1:8081/simplefin"')
+def test_load_config_accepts_a_loopback_http_custom_provider_origin(tmp_path: Path) -> None:
+    """The one non-https origin allowed: a provider on the loopback interface."""
+    loopback = VALID_TOML.replace(ORIGIN_LINE, 'origin = "http://127.0.0.1:8081"')
 
     config = load_config(_write(tmp_path, loopback))
 
-    assert config.provider_entries()[-1].root.origin_and_path == "http://127.0.0.1:8081/simplefin/"
+    assert config.provider_entries()[-1].origin == "http://127.0.0.1:8081"
 
 
 def test_config_dir_env_var_selects_the_directory(

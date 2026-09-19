@@ -120,9 +120,6 @@ def test_an_empty_store_answers_every_token_alike(tmp_path: Path) -> None:
 def test_a_claim_that_cannot_be_recorded_issues_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Persist, then respond. A client app holding credentials this server has
-    no record of looks like a working setup that silently never syncs.
-    """
     secret = add_client(tmp_path)
     client = TestClient(make_app(tmp_path))
 

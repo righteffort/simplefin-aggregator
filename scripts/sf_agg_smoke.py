@@ -86,7 +86,7 @@ def _account(account_id: str, name: str, balance: str) -> dict[str, object]:
 ACCOUNTS = (_account("acct-1", "Checking", "100.00"), _account("acct-2", "Savings", "200.00"))
 
 
-def config(roots: tuple[str, str]) -> str:
+def config(origins: tuple[str, str]) -> str:
     return f"""
 bind_host = "127.0.0.1"
 bind_port = {PORT}
@@ -94,11 +94,11 @@ base_url = "{BASE_URL}"
 
 [[custom_providers]]
 key = "{PREFIXED_KEY}"
-root = "{roots[0]}"
+origin = "{origins[0]}"
 
 [[custom_providers]]
 key = "{BLANK_KEY}"
-root = "{roots[1]}"
+origin = "{origins[1]}"
 
 [[providers]]
 key = "{PREFIXED_KEY}"
@@ -191,7 +191,7 @@ def account_ids(body: str) -> list[str]:
 
 def run(fakes: tuple[RunningFake, RunningFake], config_dir: Path) -> None:
     config_file = config_dir / "config.toml"
-    _ = config_file.write_text(config((fakes[0].root, fakes[1].root)))
+    _ = config_file.write_text(config((fakes[0].origin, fakes[1].origin)))
     config_file.chmod(0o600)
 
     for key, fake, user in zip((PREFIXED_KEY, BLANK_KEY), fakes, USERS, strict=True):

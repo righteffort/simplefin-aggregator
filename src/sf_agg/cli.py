@@ -62,13 +62,13 @@ def _load_config_or_exit() -> Config:
 def _select_provider(entries: Sequence[ProviderEntry]) -> ProviderEntry:
     """Ask which provider the setup token came from.
 
-    A menu rather than free text, and no default: which root the token is
+    A menu rather than free text, and no default: which origin the token is
     matched against is the whole of the phishing defense, so it is the user's
     deliberate answer or nothing.
     """
     typer.echo("Which provider did you get this setup token from?")
     for number, entry in enumerate(entries, start=1):
-        typer.echo(f"  {number}. {entry.key} ({entry.root.origin_and_path})")
+        typer.echo(f"  {number}. {entry.key} ({entry.origin})")
     choice = cast(str, typer.prompt("Provider"))
 
     # isdecimal, not isdigit: "²".isdigit() is true and int("²") then raises.
@@ -88,7 +88,7 @@ def _decode_setup_token(setup_token: str) -> str:
     Plain `b64decode`, as the SimpleFIN reference implementation does:
     `validate=True` would reject tokens a real provider issued, and buys
     nothing, since what actually protects the user is matching the decoded URL
-    against the selected root.
+    against the selected origin.
     """
     try:
         claim_url_bytes = base64.b64decode(setup_token)
@@ -126,9 +126,6 @@ def _claim_access_url(claim_url: NormalizedUrl, entry: ProviderEntry) -> str:
     )
     with _build_claim_client() as claim_client:
         try:
-            # origin_and_path, not the string the token decoded to: it is the
-            # rendering that was matched against the root, and a claim URL
-            # carries no credentials for it to have dropped.
             response = claim_client.post(claim_url.origin_and_path)
         except httpx2.HTTPError as exc:
             # Not the message: httpx2's text can quote provider-chosen bytes,
@@ -145,7 +142,7 @@ def _claim_access_url(claim_url: NormalizedUrl, entry: ProviderEntry) -> str:
         )
         _fail(f"error: provider {entry.key!r} rejected the setup token (403).", already_used)
     if response.status_code != HTTPStatus.OK:
-        # The status alone. A response body is attacker-influenced, and this
+        # The status alone. A response body is the provider's to fill, and this
         # path also catches the 3xx that redirects-disabled turns into a
         # failure rather than a hop.
         _fail(
@@ -231,7 +228,7 @@ def claim(
 
     try:
         # Do not send the token to a mismatched host.
-        claim_url = validate_claim_url(entry.root, _decode_setup_token(token), provider=entry.key)
+        claim_url = validate_claim_url(entry.origin, _decode_setup_token(token), provider=entry.key)
     except UrlValidationError as exc:
         what_to_check = (
             "The setup token is still valid. Check that you pasted the whole token and that it "
@@ -244,7 +241,7 @@ def claim(
 
     try:
         validated_access_url = validate_access_url(
-            entry.root, access_url.get_secret_value(), provider=entry.key
+            entry.origin, access_url.get_secret_value(), provider=entry.key
         )
     except UrlValidationError as exc:
         _fail(f"error: {exc}")
@@ -291,7 +288,11 @@ def _writable_store_or_exit() -> Path:
 
 
 def _print_setup_token(base_url: str, claim_secret: str, key: str, store_path: Path) -> None:
-    """Put the setup token on stdout alone, so `$(...)` captures it and nothing else."""
+    """Put the setup token on stdout alone, so `$(...)` captures it and nothing else.
+
+    Call only once the store holds the token's record: a token printed without
+    one would never work.
+    """
     typer.echo(f"note: {key!r} is now in {store_path}.", err=True)
     typer.echo(build_setup_token(base_url, claim_secret))
     shown_once = (
@@ -330,8 +331,6 @@ def client_add(key: _ClientArgument) -> None:
     except StateFileError as exc:
         _fail(f"error: {exc}")
 
-    # After the store is written, never before: a token this aggregator has no
-    # record of looks to the user like a working setup that never syncs.
     _print_setup_token(loaded_config.base_url, claim_secret, key, store_path)
 
 

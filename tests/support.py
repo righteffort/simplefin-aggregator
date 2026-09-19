@@ -30,9 +30,9 @@ if TYPE_CHECKING:
     )
 
 # The provider every test shares: a config-supplied custom provider, its key
-# used as the configured key, and an access URL under its root.
+# used as the configured key, and an access URL on its origin.
 PROVIDER_KEY = "my-bank"
-PROVIDER_ROOT = "https://provider.example.com/simplefin"
+PROVIDER_ORIGIN = "https://provider.example.com"
 PROVIDER_ACCESS_URL = "https://user:pass@provider.example.com/simplefin"
 
 
@@ -67,13 +67,13 @@ class ProviderSpec(NamedTuple):
 
     A `prefix` of None leaves the field out of the config entry, so the test
     gets whatever the model defaults it to; "" is an explicit blank prefix. The
-    access URL is spelled out rather than derived from the root, because
+    access URL is spelled out rather than derived from the origin, because
     `create_app` checks one against the other and a test that means them to
     disagree is entitled to say so.
     """
 
     key: str = PROVIDER_KEY
-    root: str = PROVIDER_ROOT
+    origin: str = PROVIDER_ORIGIN
     prefix: str | None = None
     access_url: str = PROVIDER_ACCESS_URL
 
@@ -97,7 +97,7 @@ def make_config(
                 else {"key": spec.key, "prefix": spec.prefix}
                 for spec in specs
             ],
-            "custom_providers": [{"key": spec.key, "root": spec.root} for spec in specs],
+            "custom_providers": [{"key": spec.key, "origin": spec.origin} for spec in specs],
             "allow_multiple_blank_prefixes": allow_multiple_blank_prefixes,
         }
     )

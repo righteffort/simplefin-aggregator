@@ -25,4 +25,4 @@ prefix = ""
 #
 # [[custom_providers]]
 # key = "my-bridge"
-# root = "https://simplefin.example.com/simplefin"
+# origin = "https://simplefin.example.com"

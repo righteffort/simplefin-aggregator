@@ -37,12 +37,12 @@ if TYPE_CHECKING:
 
 BANK_A = ProviderSpec(
     key="bank-a",
-    root="https://bank-a.example.com/simplefin",
+    origin="https://bank-a.example.com",
     access_url="https://user:pass@bank-a.example.com/simplefin",
 )
 BANK_B = ProviderSpec(
     key="bank-b",
-    root="https://bank-b.example.com/simplefin",
+    origin="https://bank-b.example.com",
     access_url="https://user:pass@bank-b.example.com/simplefin",
 )
 
@@ -342,7 +342,9 @@ def test_a_blank_prefix_provider_may_collide_with_another_without_losing_an_acco
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Requirement: a collision the operator configured costs a log line, not the user's data."""
-    blank = ProviderSpec(key=BANK_A.key, root=BANK_A.root, prefix="", access_url=BANK_A.access_url)
+    blank = ProviderSpec(
+        key=BANK_A.key, origin=BANK_A.origin, prefix="", access_url=BANK_A.access_url
+    )
     with (
         _aggregating(
             tmp_path,
@@ -378,7 +380,7 @@ def test_with_several_blank_prefixes_each_id_reaches_every_provider_it_may_belon
     """
     bank_c = ProviderSpec(
         key="bank-c",
-        root="https://bank-c.example.com/simplefin",
+        origin="https://bank-c.example.com",
         prefix="",
         access_url="https://user:pass@bank-c.example.com/simplefin",
     )
@@ -488,7 +490,7 @@ def test_a_provider_cannot_get_its_credential_into_a_log_by_echoing_it(
 
     with echoing_provider(echo_the_basic_auth_password) as (port, echoed):
         provider = ProviderSpec(
-            root=f"http://127.0.0.1:{port}/simplefin",
+            origin=f"http://127.0.0.1:{port}",
             access_url=f"http://user:{password}@127.0.0.1:{port}/simplefin",
         )
         app = make_app(tmp_path, make_config(provider), make_access_urls(provider))
@@ -518,7 +520,7 @@ def test_a_provider_request_names_no_credentials_in_the_logs_or_the_body(
 
     with _loopback_provider() as port, caplog.at_level(logging.INFO):
         provider = ProviderSpec(
-            root=f"http://127.0.0.1:{port}/simplefin",
+            origin=f"http://127.0.0.1:{port}",
             access_url=f"http://user:{password}@127.0.0.1:{port}/simplefin",
         )
         app = make_app(tmp_path, make_config(provider), make_access_urls(provider))

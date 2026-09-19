@@ -40,7 +40,7 @@ base_url = "{BASE_URL}"
 
 [[custom_providers]]
 key = "{PROVIDER_KEY}"
-root = "https://provider.example.com/simplefin"
+origin = "https://provider.example.com"
 
 [[providers]]
 key = "{PROVIDER_KEY}"
@@ -119,7 +119,7 @@ def test_startup_reports_several_failing_providers_without_either_password(
     """Aggregating every provider's startup failure into one report names no password.
 
     Each provider's stored access URL is rejected for a config drift a real
-    operator could hit -- the root moved after the URL was claimed -- and each
+    operator could hit -- the origin moved after the URL was claimed -- and each
     carries its own password, distinguishable so a corpus entry that leaked
     the wrong provider's secret would still be caught.
     """
@@ -128,14 +128,14 @@ base_url = "{BASE_URL}"
 
 [[custom_providers]]
 key = "first-bank"
-root = "https://first.example.com/simplefin"
+origin = "https://first.example.com"
 
 [[providers]]
 key = "first-bank"
 
 [[custom_providers]]
 key = "second-bank"
-root = "https://second.example.com/simplefin"
+origin = "https://second.example.com"
 
 [[providers]]
 key = "second-bank"
@@ -157,13 +157,11 @@ key = "second-bank"
         SecretStr(f"https://user:{second_password}@second.example.com/simplefin"),
     )
 
-    # Both roots move, so both stored access URLs now fail validation.
+    # Both origins move, so both stored access URLs now fail validation.
     moved_toml = config_toml.replace(
-        'root = "https://first.example.com/simplefin"',
-        'root = "https://moved-first.example.com/simplefin"',
+        'origin = "https://first.example.com"', 'origin = "https://moved-first.example.com"'
     ).replace(
-        'root = "https://second.example.com/simplefin"',
-        'root = "https://moved-second.example.com/simplefin"',
+        'origin = "https://second.example.com"', 'origin = "https://moved-second.example.com"'
     )
     _ = config_path.write_text(moved_toml)
 
@@ -176,7 +174,7 @@ key = "second-bank"
 
     assert result.exit_code == 1
     # Both providers are named, which is the report this test exists to pin.
-    assert "https://moved-first.example.com/simplefin/" in result.stderr
-    assert "https://moved-second.example.com/simplefin/" in result.stderr
+    assert "expected https://moved-first.example.com" in result.stderr
+    assert "expected https://moved-second.example.com" in result.stderr
     assert first_password not in result.stderr
     assert second_password not in result.stderr

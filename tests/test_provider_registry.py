@@ -17,38 +17,27 @@ from sf_agg.provider_registry import (
     find_provider,
     merged_providers,
 )
-from sf_agg.url_validation import UrlValidationError, parse_root
+from sf_agg.url_validation import UrlValidationError, parse_origin
 
 
 # Spelled out rather than derived from KNOWN_PROVIDERS: keys are permanent
 # identifiers (they key the access URL store and are referenced from config
 # files), so a change to one should have to be made here too, deliberately.
 EXPECTED_STATIC_PROVIDERS = [
-    ("simplefin-bridge", "https://beta-bridge.simplefin.org/simplefin/"),
-    ("lunchflow", "https://www.lunchflow.app/api/simplefin-bridge/"),
-    ("redbark", "https://api.redbark.com/simplefin/"),
+    ("simplefin-bridge", "https://beta-bridge.simplefin.org"),
+    ("lunchflow", "https://www.lunchflow.app"),
+    ("redbark", "https://api.redbark.com"),
 ]
 
 
-def _entry(key: str, root: str = "https://my-bridge.invalid/simplefin") -> ProviderEntry:
-    return ProviderEntry(key=key, root=parse_root(root))
+def _entry(key: str, origin: str = "https://my-bridge.invalid") -> ProviderEntry:
+    return ProviderEntry(key=key, origin=parse_origin(origin))
 
 
-def test_static_provider_roots() -> None:
+def test_static_provider_origins() -> None:
     assert [
-        (provider.key, provider.root.origin_and_path) for provider in KNOWN_PROVIDERS
+        (provider.key, provider.origin) for provider in KNOWN_PROVIDERS
     ] == EXPECTED_STATIC_PROVIDERS
-
-
-@pytest.mark.parametrize(
-    "provider", KNOWN_PROVIDERS, ids=[provider.key for provider in KNOWN_PROVIDERS]
-)
-def test_static_provider_root_is_canonical(provider: ProviderEntry) -> None:
-    """Each root survives a re-parse unchanged, so matching sees what is written here."""
-    root = provider.root
-    assert root.origin_and_path.endswith("/")
-    assert not root.has_creds
-    assert parse_root(root.origin_and_path).origin_and_path == root.origin_and_path
 
 
 def test_merged_providers_keeps_static_entries_first() -> None:
@@ -92,18 +81,19 @@ def test_find_provider_rejects_an_absent_key() -> None:
     assert "redbark" in message
 
 
-BAD_ROOTS = [
-    ("http://provider.invalid/simplefin", "must use https"),
-    ("https://user:pass@provider.invalid/simplefin", "must not contain credentials"),
-    ("https://provider.invalid/simplefin?x=1", "must not contain a query string or fragment"),
+BAD_ORIGINS = [
+    ("http://provider.invalid", "must use https"),
+    ("https://user:pass@provider.invalid", "must not contain credentials"),
+    ("https://provider.invalid/?x=1", "must not contain a query string or fragment"),
+    ("https://provider.invalid/simplefin", "must not have a path"),
 ]
 
 
-@pytest.mark.parametrize(("raw", "expected"), BAD_ROOTS)
-def test_custom_provider_root_is_rejected_with_a_reason(raw: str, expected: str) -> None:
-    """A config-supplied entry's root goes through parse_root, which names the problem."""
+@pytest.mark.parametrize(("raw", "expected"), BAD_ORIGINS)
+def test_custom_provider_origin_is_rejected_with_a_reason(raw: str, expected: str) -> None:
+    """A config-supplied entry's origin goes through parse_origin, which names the problem."""
     with pytest.raises(UrlValidationError, match=expected):
-        _ = parse_root(raw)
+        _ = parse_origin(raw)
 
 
 BAD_KEYS = ["", "-bank", "Redbark", "my bank", "my_bank", "café", "my-bridge\n", "a/b", "x\x1b[31m"]

@@ -30,8 +30,8 @@ if TYPE_CHECKING:
 runner = CliRunner()
 
 PROVIDER_KEY = "my-bank"
-PROVIDER_ROOT = "https://provider.example.com/simplefin"
-CLAIM_URL = f"{PROVIDER_ROOT}/claim/some-claim-secret"
+PROVIDER_ORIGIN = "https://provider.example.com"
+CLAIM_URL = f"{PROVIDER_ORIGIN}/simplefin/claim/some-claim-secret"
 SETUP_TOKEN = base64.b64encode(CLAIM_URL.encode("ascii")).decode("ascii")
 PROVIDER_PASSWORD = "s3cret-provider-password"  # noqa: S105
 # Derived, so that changing the password cannot leave the leak assertions
@@ -45,7 +45,7 @@ CONFIG_TOML = f"""
 base_url = "http://127.0.0.1:9999"
 [[custom_providers]]
 key = "{PROVIDER_KEY}"
-root = "{PROVIDER_ROOT}"
+origin = "{PROVIDER_ORIGIN}"
 
 [[providers]]
 key = "{PROVIDER_KEY}"
@@ -154,9 +154,10 @@ def test_a_provider_cannot_put_a_claim_secret_on_the_terminal_by_echoing_it(tmp_
     """
     secret_segment = "unexchanged-claim-secret"  # noqa: S105
     with echoing_provider(_echo_the_request_path) as (port, echoed):
-        root = f"http://127.0.0.1:{port}/simplefin"
-        token = base64.b64encode(f"{root}/claim/{secret_segment}".encode("ascii")).decode("ascii")
-        config = CONFIG_TOML.replace(PROVIDER_ROOT, root)
+        origin = f"http://127.0.0.1:{port}"
+        claim_url = f"{origin}/simplefin/claim/{secret_segment}"
+        token = base64.b64encode(claim_url.encode("ascii")).decode("ascii")
+        config = CONFIG_TOML.replace(PROVIDER_ORIGIN, origin)
         result = _run_claim_with_provider(tmp_path, PROVIDER_KEY, token=token, config=config)
 
     assert echoed == [f"NOT-HTTP /simplefin/claim/{secret_segment}"], (
@@ -210,8 +211,8 @@ def test_claim_offers_the_built_in_providers_alongside_the_configured_one(tmp_pa
 
     assert result.exit_code == 0
     for provider in KNOWN_PROVIDERS:
-        assert f"{provider.key} ({provider.root.origin_and_path})" in result.stdout
-    assert f"{PROVIDER_KEY} ({PROVIDER_ROOT}/)" in result.stdout
+        assert f"{provider.key} ({provider.origin})" in result.stdout
+    assert f"{PROVIDER_KEY} ({PROVIDER_ORIGIN})" in result.stdout
 
 
 @pytest.mark.usefixtures("claim_succeeds")
@@ -379,7 +380,7 @@ def test_claim_accepts_a_token_that_strict_base64_would_reject(
 def test_claim_says_the_token_is_unused_when_the_claim_url_is_unparseable(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
-    """The advice has to hold for every rejection, not just a root mismatch."""
+    """The advice has to hold for every rejection, not just an origin mismatch."""
     result = _run_claim(tmp_path, base64.b64encode(b"not-a-url").decode("ascii"))
 
     assert result.exit_code == 1
@@ -399,7 +400,7 @@ def test_claim_with_a_token_decoding_to_non_ascii_fails(
     assert "not ASCII" in result.stderr
 
 
-def test_claim_rejects_a_claim_url_outside_the_selected_root_before_any_request(
+def test_claim_rejects_a_claim_url_outside_the_selected_origin_before_any_request(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
     lookalike = "https://provider.example.com.evil.test/simplefin/claim/some-claim-secret"
@@ -408,7 +409,7 @@ def test_claim_rejects_a_claim_url_outside_the_selected_root_before_any_request(
     result = _run_claim(tmp_path, token)
 
     assert result.exit_code == 1
-    assert claim_succeeds == [], "a hostile host must not learn the token is live"
+    assert claim_succeeds == [], "a lookalike host must not be contacted"
     assert "https://provider.example.com.evil.test is not valid" in result.stderr
     assert "some-claim-secret" not in result.output, "the token is still unexchanged"
     assert "is still valid" in result.stderr
@@ -566,7 +567,7 @@ def test_a_provider_no_entry_defines_is_refused_before_the_token_is_exchanged(
 
     assert result.exit_code == 1
     # Named as the reason: a key that resolved to the wrong provider would
-    # also stop here, on the root the setup token fails to match.
+    # also stop here, on the origin the setup token fails to match.
     assert "unknown provider" in result.stderr
     assert claim_succeeds == []
     assert _stored(tmp_path) == {}
@@ -612,7 +613,7 @@ def test_claim_probes_the_stored_access_url_with_balances_only(
     result = _run_claim(tmp_path, SETUP_TOKEN)
 
     assert result.exit_code == 0
-    assert probed == [f"{PROVIDER_ROOT}/accounts?balances-only=1"]
+    assert probed == [f"{PROVIDER_ORIGIN}/simplefin/accounts?balances-only=1"]
     assert "warning" not in result.stderr
 
 
@@ -673,11 +674,12 @@ def test_a_provider_cannot_leak_its_credential_via_the_probes_malformed_reply(
 ) -> None:
     """Requirement: nothing a provider puts on the wire during the probe is rendered."""
     with echoing_provider(echo_the_basic_auth_password) as (port, echoed):
-        root = f"http://127.0.0.1:{port}/simplefin"
-        config = CONFIG_TOML.replace(PROVIDER_ROOT, root)
+        origin = f"http://127.0.0.1:{port}"
+        config = CONFIG_TOML.replace(PROVIDER_ORIGIN, origin)
         access_url = f"http://user:{PROVIDER_PASSWORD}@127.0.0.1:{port}/simplefin"
         _ = _install_provider(monkeypatch, _responds(200, access_url))
-        token = base64.b64encode(f"{root}/claim/some-claim-secret".encode("ascii")).decode("ascii")
+        claim_url = f"{origin}/simplefin/claim/some-claim-secret"
+        token = base64.b64encode(claim_url.encode("ascii")).decode("ascii")
 
         result = _run_claim(tmp_path, token, config=config)
 

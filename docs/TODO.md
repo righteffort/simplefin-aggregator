@@ -55,8 +55,8 @@ access URL". The glossary lets a client claim an access URL, not a provider:
 - `tests/test_serve.py:200` — test name `test_serve_fails_when_one_of_several_providers_has_not_been_claimed`, same.
 - `tests/test_serve.py:203` — "Any unclaimed provider stops the server from starting.", same.
 - `tests/test_serve.py:211` — "the claimed provider gets no server of its own", same.
-- `tests/test_serve.py:218` — "Neither an unclaimed provider nor a root mismatch hides the other's report.", same.
-- `tests/test_serve.py:224` — "claimed for 'my-bank', whose root just moved": an access URL claimed from `my-bank`.
+- `tests/test_serve.py:218` — "Neither an unclaimed provider nor an origin mismatch hides the other's report.", same.
+- `tests/test_serve.py:224` — "claimed for 'my-bank', whose origin just moved": an access URL claimed from `my-bank`.
 - `tests/test_claim.py:322` — "not by what was claimed" means the provider key the access URL was claimed from.
 - `tests/test_claim.py:324` — "provider stays claimable" means an access URL can still be claimed from it.
 - `tests/test_provider_access_urls.py:472` — "Two providers claimed at once" means two access URLs saved concurrently.
@@ -92,6 +92,7 @@ does not cover. Either define it or use another verb ("owns", "matches"):
 - get rid of useless test docstrings when test name is self-documenting; reconcile docstring/test name/test body as you go
 - get rid of useless & verbose docstrings
 - get rid of noise in ARCHITECTURE.md
+- ARCHITECTURE.md should link to the source code files, not just name the files
 
 # Short-term fit and finish [human]
 - emphasize that `providers_creds.json` holds bearer tokens and what that means!
@@ -119,8 +120,6 @@ does not cover. Either define it or use another verb ("owns", "matches"):
 
 # Other future work
 
-- review language for 'attacker', 'hostile', etc. and make sure they are not
-  being used when 'misbehaving' would be more accurate.
 - maybe in `cli.py:claim` show asterisks instead of nothing (`hide_input=True`
   behavior). IIUC once python3.13 is deprecated we can use a python3.14 to help
   with this, if true leave a TODO behind to simplify

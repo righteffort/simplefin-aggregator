@@ -88,7 +88,7 @@ disambiguated, it is prefixed with the issuer: **provider** or **aggregator**
 | `state_file.py` | Everything this application does with a file it owns: the permission warning, the redacted validation-error rendering, the atomic 0600 write, the sidecar `flock`, and the locked read-modify-write. Imports nothing else in the package — `config.py` takes its warning and its error rendering from here, not the other way around. |
 | `agg_creds.py` | The aggregator creds store: the two-state record, the digest helpers, and the constructors that mint a claim secret and exchange a record for credentials. |
 | `provider_registry.py` | `ProviderEntry` and `KNOWN_PROVIDERS`: the fixed set of providers a setup token may reference, plus `merged_providers`/`find_provider`. Must not import `config.py` — config imports it. |
-| `url_validation.py` | `NormalizedUrl`, `parse_url`/`parse_root`, `validate_claim_url`/`validate_access_url`, `UrlValidationError`. The phishing defense; read its module docstring before touching anything here. |
+| `url_validation.py` | `NormalizedUrl`, `parse_url`/`parse_origin`, `validate_claim_url`/`validate_access_url`, `UrlValidationError`. The phishing defense; read its module docstring before touching anything here. |
 | `provider_access_urls.py` | The `provider_creds.json` store: provider key → access URL. Schema and semantics only; the file handling is `state_file.py`'s. |
 | `app.py` | `create_app(config, access_urls, agg_creds_path) -> FastAPI`: the ASGI app factory, lifespan, and all three HTTP routes. |
 | `access_url.py` | Builds the access URL this aggregator hands back from `POST /simplefin/claim/{claim_secret}` — the one it *issues*, not the ones it holds (that is `provider_access_urls.py`). |
@@ -167,8 +167,8 @@ To see the precise fields, consult `config.py`.
 `config.py`'s module docstring says why there are two.
 
 `base_url` must be ASCII because a URL is: an internationalized host appears in
-one as punycode, not as the characters it is spelled with. The provider path
-gets that conversion free — `parse_root` reads `raw_host` off httpx2's parser,
+one as punycode, not as the characters it is spelled with. A provider origin
+gets that conversion free — `parse_origin` reads `raw_host` off httpx2's parser,
 which has already encoded it — while `base_url` goes through `urlsplit`, which
 normalizes nothing and hands back whatever it was given. So the requirement
 falls on the input, and it is checked at load time rather than where
@@ -186,8 +186,8 @@ reports them and not just the one that would trip over them:
 
 - Every `provider.key` is resolved against `provider_entries()`, so a dangling
   reference fails for *every* command rather than at first dereference — and a
-  `custom_providers` root is parsed during validation, so a broken one fails at
-  `claim` time rather than surviving to `serve`.
+  `custom_providers` origin is parsed during validation, so a broken one fails
+  whichever command loads the config rather than surviving to `serve`.
 - No key appears twice in `providers`. Everything per-provider is keyed by it,
   so two entries sharing one would collapse into a single provider rather than
   being aggregated.
@@ -213,13 +213,13 @@ Its two error branches are item 3 of "Cross-cutting: secrets and logging".
 ### `CustomProvider` (`config.py`)
 
 The model a user hand-edits into `custom_providers` for a provider the
-built-in list does not name. Its `@field_validator("root")` runs
-`parse_root()` and reports a bad root against that one field, rather than
+built-in list does not name. Its `@field_validator("origin")` runs
+`parse_origin()` and reports a bad origin against that one field, rather than
 leaving it to the model-level check to reject the whole `Config` — so the
 error names the offending entry instead of, via pydantic's default
 `ValidationError` rendering, the entire file.
 `as_provider_entry()` converts one into a `ProviderEntry`,
-validating both `key` and `root` again in the process; `provider_entries()`
+validating both `key` and `origin` again in the process; `provider_entries()`
 merges the result into `KNOWN_PROVIDERS`
 through `merged_providers`, which rejects a duplicate key rather than letting
 a custom entry shadow or collide with a built-in one.
@@ -253,7 +253,7 @@ a plaintext credential on disk.
 ### `ProviderEntry` (`provider_registry.py`)
 
 ```text
-ProviderEntry(key: str, root: NormalizedUrl)   # frozen
+ProviderEntry(key: str, origin: str)   # frozen
 ```
 
 `key` is constrained to `[a-z0-9][a-z0-9-]*` in `__post_init__`, through which every
@@ -265,36 +265,30 @@ config references.
 `merged_providers` rejects a duplicate key rather than letting a config entry
 override a built-in one, and `find_provider` raises on an absent key — never
 guessed at, never fuzzy-matched. Adding an entry is a config-file edit and
-nothing else: no flag, no interactive "trust this origin?" prompt. See
-"Provider URL validation".
+nothing else: no flag, no interactive "trust this origin?" prompt.
+`provider_registry.py`'s docstring says why.
 
 ### `NormalizedUrl` (`url_validation.py`)
 
 ```text
-NormalizedUrl                        # frozen; produced only by parse_url/parse_root
-  scheme, host, port, username, password
-  origin: str                        # scheme://host[:port]      -- what a message names
-  origin_and_path: str               # scheme://host[:port]path  -- what matching compares
+NormalizedUrl                        # frozen; produced only by parse_url
+  scheme, host, username, password
+  origin: str                        # scheme://host[:port]      -- what matching compares and a message names
+  origin_and_path: str               # scheme://host[:port]path  -- what a request is sent to
   .has_creds -> bool
 ```
 
 Per-field normalization is documented on the dataclass. What matters outside
 `url_validation.py` is that neither `origin` nor `origin_and_path` carries
-credentials, and three rules that are easy to break by accident:
+credentials, and two rules that are easy to break by accident:
 
 - **Parse once per operation.** Read every field an operation needs off one
   `NormalizedUrl`; never re-parse the source string alongside it, and never
   derive a field by a separate string operation. Two parses of a string that
   was normalized in between silently check different inputs. This applies to
   request-building as much as to validation.
-- **`origin_and_path` is not a URL to fetch.** It has no credentials, and a
-  root's has a trailing `/` the configured string need not have had. The single
-  exception is `build_provider_client`'s `base_url`, which httpx2 joins request
-  paths onto rather than fetching as given, with credentials supplied
-  separately via `auth=`. There is a comment there saying so.
-- **Messages name a URL only through `origin` (or a root's
-  `origin_and_path`), never the raw string.** See "Cross-cutting: secrets and
-  logging".
+- **Messages name a URL only through `origin`, never the raw string or
+  `origin_and_path`.** See "Cross-cutting: secrets and logging".
 
 ### `ProviderResponse` (`provider_response.py`)
 
@@ -354,10 +348,10 @@ URL query parameter and lands in the client app's database and nothing is
 gained by allowing whitespace or `%` in it.
 
 **The blank prefix is legal, and is the point of the field being
-overridable.** Someone already syncing straight from a provider, whose client
-app holds that provider's raw account ids, puts that provider behind this
-aggregator by setting `prefix = ""` for it. Any other value re-identifies every
-one of their accounts.
+overridable.** Someone whose client app is already connected directly to a
+provider, and so holds that provider's raw account ids, puts that provider
+behind this aggregator by setting `prefix = ""` for it. Any other value
+re-identifies every one of their accounts.
 
 Routing inverts the prefixing, so the set has to be unambiguous. `Config`
 validation keeps non-blank prefixes prefix-free — stricter than distinctness,
@@ -380,7 +374,7 @@ nothing with the news while the operator can change a prefix.
 
 **`allow_multiple_blank_prefixes = true` lifts the one-blank-prefix limit and
 nothing else.** It is for a client app that already holds raw account ids from several
-providers it used to sync with directly, where any prefix on any of them would
+providers it used to connect to directly, where any prefix on any of them would
 re-identify those accounts. An id no named prefix claims then belongs to every
 blank-prefix provider, and the longest-prefix match returns all of them, so each
 is asked about it and the ones that did not issue it answer about no
@@ -395,31 +389,12 @@ account. The costs are:
 
 ## Provider URL validation
 
-`url_validation.py`'s module docstring holds the threat model and the rules;
-read it before changing anything there. What it means for the rest of the
-codebase:
-
-- **The threat is phishing and paste error, not SSRF.** Exact matching against
-  a fixed set of known-good roots is the only control that works, since a user
-  asked to confirm a host in the phishing case confirms the attacker's. That is
-  why `KNOWN_PROVIDERS` is fixed, why extending it is a config edit and nothing
-  else, and why a mismatch is a hard failure with no prompt and no `--force`.
-- **Deliberately not implemented**: IP-range blocking, DNS
-  pre-resolution/pinning or other SSRF defenses (single principal, no confused
-  deputy — and TLS binds identity to the hostname, so the resolved address is
-  irrelevant); credential encryption at rest beyond file permissions.
-- **Matching is one prefix comparison** of `origin_and_path`, which begins with
-  the scheme and host and so covers scheme, host, port and path prefix at once.
-  **Do not add separate scheme/host/port checks anywhere** — they would be
-  redundant and could drift.
-- **Two gaps are left open deliberately**: a provider root's path is rendered
-  in full in messages, so a config-supplied root carrying a capability token in
-  its path would print it on every mismatch — the "a root is configuration, not
-  a secret" policy working as intended; and a URL malformed enough that the
-  parse misreads where its credentials end can put a fragment of one in
-  `origin`. `UrlValidationError`'s docstring states both, and the tests pinning
-  them say they pin behavior rather than a requirement. Both are accepted in
-  preference to the checks that would close them.
+A setup token is pasted in from a web page, making the URLs it leads to only as
+trustworthy as that page: one from a lookalike site points at the attacker's
+host, which would then answer every request. So a claim URL and an access URL
+must each be validated before use, by `validate_claim_url` and
+`validate_access_url`. `url_validation.py`'s module docstring holds the threat
+model and the rules in more detail.
 
 ## Request/command flows
 
@@ -444,8 +419,8 @@ cli.serve
 `create_app` raises rather than starting a server that cannot work: for each
 configured `provider.key` it resolves the entry, looks the key up in the store
 (missing → "run claim first"), and re-runs `validate_access_url` against that
-provider's *current* root. That is a single-entry comparison, not a scan — the
-URL was issued by specific provider, so that is the root it must still
+provider's *current* origin. That is a single-entry comparison, not a scan —
+the URL was issued by a specific provider, so that is the origin it must still
 match. Every provider's check runs regardless of the others' outcome, and
 `create_app` raises every failure together as one `ProviderAccessUrlError`;
 `cli.py` prints each on its own line, the same display-safe text
@@ -465,11 +440,11 @@ cli.claim
        provider given   -> find_provider    # named, so exact; never fuzzy; never echoed
        otherwise        -> numbered menu; no default, no free-text host
   -> prompt for the token, hidden if stdin is a real terminal
-  -> _decode_setup_token  -> validate_claim_url(entry.root, ...)   # BEFORE any network call
+  -> _decode_setup_token  -> validate_claim_url(entry.origin, ...)   # BEFORE any network call
   -> POST claim_url.origin_and_path, redirects disabled
        - 403      -> "may be compromised, revoke it at the provider"
        - non-200  -> status only, never the body (3xx lands here too)
-  -> validate_access_url(entry.root, response.text.strip(), ...)
+  -> validate_access_url(entry.origin, response.text.strip(), ...)
   -> save_access_url(store, entry.key, access_url)
   -> note naming the store path -> stderr
   -> _probe_access_url(access_url): GET /accounts?balances-only=1, one attempt
@@ -481,7 +456,7 @@ cli.claim
 
 One property and four orderings in there are load-bearing.
 
-The property: **the provider is named or chosen, never defaulted.** Which root
+The property: **the provider is named or chosen, never defaulted.** Which origin
 the token is matched against is the whole of the phishing defense, so it is the
 user's deliberate answer either way — naming it on the command line is as
 deliberate as picking from the menu, and an unknown key is an error rather than
@@ -491,15 +466,14 @@ line instead of at the prompt.
 
 The orderings:
 
-1. **The provider is settled before the token is read.** Otherwise the root a
+1. **The provider is settled before the token is read.** Otherwise the origin a
    token is matched against could be inferred from the token, which is the one
    thing that must not decide it.
 2. **The store is read and its directory checked before the POST.** The token
    is one-time-use, so a file problem discovered afterwards is a lost
    credential rather than a retry.
-3. **Validation comes before the POST.** A hostile host you contact has
-   already learned your egress IP and that the token is live, however you treat
-   its reply.
+3. **Validation comes before the POST**, which would spend a pasted token
+   whatever the reply.
 4. **The response is stripped, then validated, then stored** — never printed.
 
 A `claim` invocation for a provider the config's `[[providers]]` does not name still
@@ -525,10 +499,8 @@ cli.client_add(key)
   -> "shown once" note -> stderr
 ```
 
-Two orderings here are load-bearing. The duplicate check is *inside* the
-lock, or it answers from a version another writer is already replacing. The
-token is printed *after* the store is written, because a token this aggregator
-has no record of looks to the user like a working setup that never syncs.
+The duplicate check is *inside* the lock, or it answers from a version another
+writer is already replacing.
 
 `client reset` is the same flow over an existing record, keeping its
 `created_at`. `client revoke` deletes the record outright. Neither leaves a
@@ -549,10 +521,7 @@ app.claim(claim_secret)
   -> else: build_access_url(base_url, credentials) -> 200 text/plain, no trailing newline
 ```
 
-**Persist, then respond.** Crashing after the write costs a setup token the
-operator replaces with `client reset`; crashing after the response leaves the
-client app holding credentials this server does not recognize. The
-write-then-rename and its `fsync` are what make "persisted" mean survived a
+**Persist, then respond.** The write-then-rename and its `fsync` are what make "persisted" mean survived a
 power cut, not merely reached the page cache — which is why the write stays in
 the request path.
 
@@ -623,10 +592,8 @@ contributing nothing, the same as any other way of failing.
 
 ## Concurrency model
 
-<!-- TODO: 'sync clients' -->
-
 - Everything provider-facing is `httpx2.AsyncClient` / `async def`. The only
-  sync clients are `claim`'s two, for the POST and the probe — a one-shot
+  synchronous clients are `claim`'s two, for the POST and the probe — a one-shot
   command outside any request path.
 - One `AsyncClient` per provider, built once in the lifespan, closed once at
   shutdown. Never built per-request.
@@ -730,13 +697,13 @@ before touching anything credential-adjacent:
    today), it doesn't need any redaction since uvicorn's access log never
    includes headers.
 5. **The stored provider access URL**, the most sensitive value in the system.
-   It reaches a message only as `NormalizedUrl.origin` or `origin_and_path`,
-   never as the raw string — and the same rule covers the setup token, which
+   It reaches a message only as `NormalizedUrl.origin`, never as the raw
+   string — and the same rule covers the setup token, which
    encodes the *path* of a claim URL. `cli.py` therefore prints
    `UrlValidationError`'s own message and never re-renders the URL itself; that
    message is deliberately built for display, and its docstring says what it
-   guarantees and where the guarantee stops. Provider response bodies are
-   attacker-influenced. None of that text reaches an error message this
+   guarantees and where the guarantee stops. A provider response body is
+   whatever the provider chose to send. None of that text reaches an error message this
    application writes. Account ids are the exception that proves the rule: two
    log lines render one, `merge`'s collision warning and the routing warning for
    an id no prefix claims, the first provider-derived and the second from the
@@ -797,7 +764,7 @@ sent.
   provider on loopback. Neither script ships in the package.
 - **`tests/support.py`** holds the shared fixtures: `make_config` builds a
   `Config` through `config_from_mapping`, the path `load_config` uses, from as
-  many `ProviderSpec`s as a test names — each one a key, a root, an optional
+  many `ProviderSpec`s as a test names — each one a key, an origin, an optional
   explicit prefix and the access URL the store will hold for it, spelled out
   rather than derived so that a test meaning them to disagree can say so;
   `make_access_urls`/`make_app` supply `create_app`'s other arguments, and
@@ -809,7 +776,7 @@ sent.
   an ordering constraint its docstring explains, and refuses a key the app
   built no client for. The fixture provider is a
   `custom_providers` entry, so most tests exercise the config-supplied path
-  rather than a built-in root.
+  rather than a built-in one.
 - Tests are labeled to say whether they pin a *requirement* or *current
   behavior*; `AGENTS.md` has the rule.
 - Reaching into `app.py`'s private names from test code is accepted
@@ -828,7 +795,7 @@ sent.
 - **No `GET /create`.** The browser flow a real provider offers for minting a
   setup token is not implemented; `client add` is this application's equivalent.
   Precedent: https://beta-bridge.simplefin.org/simplefin/create is unimplemented.
-- **The access URL must share the claim URL's provider root.** The spec leaves
+- **The access URL must share the claim URL's provider origin.** The spec leaves
   that open; see "Provider URL validation".
 
 ## Non-goals (don't build ahead of need)
@@ -847,6 +814,7 @@ sent.
   client app's parameters go to every queried provider unchanged.
 - **`errlist`, `connections`, or any other v2 field**, inbound or outbound.
 - **Dereferencing an account's `currency` URL.**
+- **Encrypting credentials at rest** beyond file permissions.
 
 ## Stack notes
 

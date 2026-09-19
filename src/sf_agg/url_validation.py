@@ -1,41 +1,35 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
-"""Match provider URLs against a fixed set of known-good roots.
+"""Match provider URLs against a fixed set of known-good origins.
 
 The threat is phishing and paste error. A SimpleFIN setup token is a
 base64-encoded URL the user copies from a web page; if that page was a
 lookalike -- a similar-looking domain, or a Unicode homograph of a real one --
-the token points entirely at attacker infrastructure, and exchanging it hands
-over credentials that are replayed on every sync thereafter. Asking the user to
-confirm the host does not help, because in the phishing case their memory of
-where they just were *is* the attacker's domain. Exact matching against
-known-good roots is the only control that works.
+the token points entirely at attacker infrastructure, and every request made
+with the access URL goes to the attacker's host, which can craft an arbitrary
+HTTP response and learns when and from where each request is made. Asking the
+user to confirm the host does not help, because in the phishing case their
+memory of where they just were *is* the attacker's domain. Exact matching against
+known-good origins minimizes the risk. The origin -- scheme, host and port --
+is all that is matched: what a known-good host serves at any path is its
+operator's.
 
-Three rules, each with a limit worth knowing:
+Two rules, each with a limit worth knowing:
 
-1. A URL is accepted only when a provider root is a prefix of it, compared as
-   one string. `origin_and_path` is that string -- scheme, host, port, path,
-   nothing else -- and because it starts with the scheme and host, the single
-   test covers all four at once. Roots end in "/", so it cannot straddle a
-   segment boundary. The comparison is on `httpx2.URL`'s normalized form, so
-   "the same URL" means "the same once normalized": a redundant `:443` or an
-   unencoded space matches, while a trailing dot on the host, which httpx2
-   leaves alone, does not.
+1. A URL is accepted only when its origin equals a provider's, as normalized by
+   the same `httpx2.URL` parse that the request is later built from: a
+   redundant `:443` or an uppercase host matches, while a trailing dot on the
+   host, which httpx2 leaves alone, does not.
 
-2. The string compared is the string fetched, since both are httpx2's own
-   rendering and cannot drift apart. The exception is a "." or ".." path
-   segment, where httpx2's own views disagree; those are rejected rather than
-   resolved.
-
-3. Messages do not print secrets -- an access URL's credentials, a claim URL's
+2. Messages do not print secrets -- an access URL's credentials, a claim URL's
    setup token. Best effort, not a guarantee: see `UrlValidationError`.
 """
 
 from __future__ import annotations
 
 import ipaddress
-from dataclasses import dataclass, replace
-from urllib.parse import unquote, urlsplit
+from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 import httpx2
 
@@ -43,21 +37,18 @@ import httpx2
 class UrlValidationError(Exception):
     """A URL was rejected, with a message complete on its own.
 
-    A message names a URL only through `NormalizedUrl.origin` or
-    `origin_and_path`, never the raw string: an access URL's raw string holds
-    the Basic Auth password, and a claim URL's path holds a secret that is still
-    live when a mismatch is reported, with its setup token not yet exchanged. A
-    provider root is configuration rather than a secret, so messages about one
-    name it in full.
+    A message names a URL only through `NormalizedUrl.origin`, never the raw
+    string: an access URL's raw string holds the Basic Auth password, and a
+    claim URL's path holds a secret that is still live when a mismatch is
+    reported, with its setup token not yet exchanged.
 
-    This holds for input well-formed enough to parse as intended. A URL
-    malformed past that point can put a fragment of a credential in `origin`:
-    an unencoded "/" in a password ends the authority early, so the username is
-    read as the host and the password's leading characters as the port. Only
-    digits survive that -- any other port text fails the parse, which reports
-    "not a valid URL" and nothing else. That gap is left open deliberately: the
-    checks needed to close it cost more in complexity than the corner case is
-    worth.
+    `origin` ends at the first "/", "?" or "#" after the "//", so a claim URL's
+    secret, being in its path, cannot reach it. An access URL's password comes
+    before that point, and any of those characters unencoded in it ends the
+    origin early: with only digits before it, the username is read as the host
+    and those digits as the port, and the message rejecting the URL names
+    both. Only a broken provider issues one, and the credential is unusable
+    anyway, since every client misparses it the same way.
     """
 
 
@@ -69,17 +60,14 @@ class NormalizedUrl:
     the source string again: two parses of a string that was normalized in
     between silently check different inputs.
 
-    `origin_and_path` is what matching compares; `origin` drops the path and is
-    what messages name. Neither carries credentials, and neither is a URL to
-    fetch -- a root's `origin_and_path` has a trailing slash the configured
-    string need not have had.
+    `origin` is what matching compares and what messages name;
+    `origin_and_path` is what a request is sent to. Neither carries
+    credentials.
     """
 
     scheme: str
     host: str
     """Lowercased, and punycode if the source was non-ASCII."""
-    port: int | None
-    """None when absent, and when it is the scheme's default."""
     username: str
     """Percent-decoded; empty when absent."""
     password: str
@@ -117,7 +105,7 @@ def parse_url(raw: str) -> NormalizedUrl:
     Rejects what `httpx2.URL` rejects -- a control character anywhere, which is
     also what stops CRLF splicing; a non-numeric port; a hostname that is not
     valid IDNA -- plus a missing host, a port outside the range `urlsplit`
-    accepts, a query string or fragment, and a "." or ".." path segment.
+    accepts, and a query string or fragment.
 
     Everything else is normalized rather than refused: scheme and host
     lowercased, a non-ASCII host punycoded, a default port dropped, a character
@@ -125,14 +113,11 @@ def parse_url(raw: str) -> NormalizedUrl:
     """
     try:
         url = httpx2.URL(raw)
-        # urlsplit parses `raw` again for two things httpx2 does not give:
-        # the path as written (see _has_dot_segment), and a port range check,
-        # since SplitResult.port raises for one outside 0-65535 where httpx2
-        # accepts any integer. It also raises on a bracketed host that httpx2
-        # accepts ("https://h]/x"), which is why it sits inside this guard.
-        split = urlsplit(raw)
-        path_as_written = split.path
-        _ = split.port
+        # urlsplit parses `raw` again for a port range check, since
+        # SplitResult.port raises for one outside 0-65535 where httpx2 accepts
+        # any integer. It also raises on a bracketed host that httpx2 accepts
+        # ("https://h]/x"), which is why it sits inside this guard.
+        _ = urlsplit(raw).port
     except (httpx2.InvalidURL, ValueError):
         # The parser's own text quotes a slice of what it choked on, which for
         # a failed parse can be any part of the string, credentials included.
@@ -157,14 +142,9 @@ def parse_url(raw: str) -> NormalizedUrl:
         query_msg = f"{origin} must not contain a query string or fragment"
         raise UrlValidationError(query_msg)
 
-    if _has_dot_segment(path_as_written) or _has_dot_segment(url.path):
-        dot_segment_msg = f"{origin} must not contain a '.' or '..' path segment"
-        raise UrlValidationError(dot_segment_msg)
-
     return NormalizedUrl(
         scheme=url.scheme,
         host=host,
-        port=url.port,
         username=url.username,
         password=url.password,
         origin=origin,
@@ -172,81 +152,53 @@ def parse_url(raw: str) -> NormalizedUrl:
     )
 
 
-def _has_dot_segment(path: str) -> bool:
-    """Whether `path` has a "." or ".." segment, in either view of it.
+def parse_origin(raw: str) -> str:
+    """Parse a provider origin from the built-in list or from config into its normalized form."""
+    url = parse_url(raw)
 
-    Matching reads a path literally while a server resolves it, so
-    "/simplefin/../../evil" prefix-matches a "/simplefin/" root while naming
-    "/evil". The path as written catches the plain spelling, which httpx2
-    resolves before this sees it; httpx2's percent-decoded `.path` catches
-    "%2e%2e" and "%2f..", which it passes through for a server to resolve.
-    """
-    return any(unquote(segment) in (".", "..") for segment in path.split("/"))
-
-
-def parse_root(raw: str) -> NormalizedUrl:
-    """Parse a provider root URL from the built-in list or from config."""
-    root = parse_url(raw)
-
-    if root.has_creds:
-        creds_msg = f"provider root {root.origin_and_path} must not contain credentials"
+    if url.has_creds:
+        creds_msg = f"provider origin {url.origin} must not contain credentials"
         raise UrlValidationError(creds_msg)
 
     # https is always allowed. http is allowed only for a server reached over
     # the loopback interface.
-    if not (root.scheme == "https" or (root.scheme == "http" and is_loopback_host(root.host))):
+    if not (url.scheme == "https" or (url.scheme == "http" and is_loopback_host(url.host))):
         scheme_msg = (
-            f"provider root {root.origin_and_path} must use https, "
+            f"provider origin {url.origin} must use https, "
             "or http with a literal loopback IP address as the host"
         )
         raise UrlValidationError(scheme_msg)
 
-    # Prefix-matching needs the trailing slash, or a "/simplefin" root would
-    # match "/simplefin-evil". A root is only ever compared, never fetched, so
-    # appending one is safe.
-    if root.origin_and_path.endswith("/"):
-        return root
-    return replace(root, origin_and_path=root.origin_and_path + "/")
+    if url.origin_and_path not in (url.origin, url.origin + "/"):
+        path_msg = f"provider origin {url.origin} must not have a path"
+        raise UrlValidationError(path_msg)
+
+    return url.origin
 
 
-def _check_matches_root(root: NormalizedUrl, url: NormalizedUrl, kind: str, provider: str) -> None:
-    # One comparison covers scheme, host, port and path prefix, because
-    # origin_and_path begins with the scheme and host. The trailing slash on
-    # the candidate lets an access URL equal to the root itself match
-    # ("https://h/simplefin" against a "https://h/simplefin/" root), while
-    # still failing on a segment boundary ("https://h/simplefin-evil").
-    if not (url.origin_and_path + "/").startswith(root.origin_and_path):
+def _check_matches_origin(origin: str, url: NormalizedUrl, kind: str, provider: str) -> None:
+    if url.origin != origin:
         # `provider` names the entry in the message. Pass a key from
         # find_provider; ProviderEntry constrains those to [a-z0-9][a-z0-9-]*.
-        msg = (
-            f"{kind} {url.origin} is not valid for provider {provider!r}: "
-            f"expected it to start with {root.origin_and_path}"
-        )
+        msg = f"{kind} {url.origin} is not valid for provider {provider!r}: expected {origin}"
         raise UrlValidationError(msg)
 
 
-def validate_claim_url(root: NormalizedUrl, raw: str, *, provider: str) -> NormalizedUrl:
-    """Validate a base64-decoded claim URL against the provider root the user selected."""
+def validate_claim_url(origin: str, raw: str, *, provider: str) -> NormalizedUrl:
+    """Validate a base64-decoded claim URL against the provider origin the user selected."""
     url = parse_url(raw)
     if url.has_creds:
         msg = f"claim URL {url.origin} must not contain credentials"
         raise UrlValidationError(msg)
-    _check_matches_root(root, url, "claim URL", provider)
+    _check_matches_origin(origin, url, "claim URL", provider)
     return url
 
 
-def validate_access_url(root: NormalizedUrl, raw: str, *, provider: str) -> NormalizedUrl:
-    """Validate a returned access URL against the same provider root as the claim URL.
-
-    The SimpleFIN spec does not require the access URL to share an origin with
-    the claim URL -- it merely does, for every provider known when this was
-    written. Enforcing it closes an assumption the spec leaves open, on the
-    theory that an access URL arriving on a surprising origin is likelier to be
-    a compromised or misbehaving provider than a legitimate re-architecture.
-    """
+def validate_access_url(origin: str, raw: str, *, provider: str) -> NormalizedUrl:
+    """Validate a returned access URL against the same provider origin as the claim URL."""
     url = parse_url(raw)
     if not url.has_creds:
         msg = f"access URL {url.origin} must contain credentials"
         raise UrlValidationError(msg)
-    _check_matches_root(root, url, "access URL", provider)
+    _check_matches_origin(origin, url, "access URL", provider)
     return url

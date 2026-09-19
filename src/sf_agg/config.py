@@ -24,13 +24,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from .provider_registry import ProviderEntry, ProviderRegistryError, find_provider, merged_providers
 from .state_file import describe_validation_failure, warn_if_permissive
-from .url_validation import UrlValidationError, is_loopback_host, parse_root
+from .url_validation import UrlValidationError, is_loopback_host, parse_origin
 
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
-
-    from .url_validation import NormalizedUrl
 
 
 APP_NAME = "sf-agg"
@@ -83,15 +81,15 @@ class Provider:
             raise ConfigCheckError(msg)
 
 
-def _parse_root_or_value_error(raw: str) -> NormalizedUrl:
-    """`parse_root`, reporting failure the way pydantic can render it.
+def _parse_origin_or_value_error(raw: str) -> str:
+    """`parse_origin`, reporting failure the way pydantic can render it.
 
     UrlValidationError is not a ValueError, so pydantic would let it escape as
     a traceback rather than reporting it as a config error. Its message is
     built for display and carries no credentials.
     """
     try:
-        return parse_root(raw)
+        return parse_origin(raw)
     except UrlValidationError as exc:
         raise ValueError(str(exc)) from None
 
@@ -107,23 +105,23 @@ class CustomProvider(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
     key: str
-    root: str
+    origin: str
 
-    @field_validator("root")
+    @field_validator("origin")
     @classmethod
-    def _validate_root(cls, value: str) -> str:
-        """Reject a bad root as a fault of this field, not of the config as a whole.
+    def _validate_origin(cls, value: str) -> str:
+        """Reject a bad origin as a fault of this field, not of the config as a whole.
 
-        Left to the model-level check below, a bad root is reported against the
+        Left to the model-level check below, a bad origin is reported against the
         whole `Config`, so the message names no entry and pydantic's own
         rendering of the rejected input is the entire config file.
         """
-        _ = _parse_root_or_value_error(value)
+        _ = _parse_origin_or_value_error(value)
         return value
 
     def as_provider_entry(self) -> ProviderEntry:
-        """Convert to a registry entry, validating the key and the root."""
-        return ProviderEntry(key=self.key, root=_parse_root_or_value_error(self.root))
+        """Convert to a registry entry, validating the key and the origin."""
+        return ProviderEntry(key=self.key, origin=_parse_origin_or_value_error(self.origin))
 
 
 class _ConfigModel(BaseModel):
@@ -314,9 +312,9 @@ def load_config(path: Path) -> Config:
         return config_from_mapping(data)
     except ValidationError as exc:
         # The same rendering the state files use, for the same reason: a
-        # provider root can carry userinfo, and pydantic's own rendering would
+        # provider origin can carry userinfo, and pydantic's own rendering would
         # quote it back. That this file is not meant to hold credentials exempts
-        # nothing -- a root in it still can.
+        # nothing -- an origin in it still can.
         msg = f"invalid config in {path}:\n{describe_validation_failure(_ConfigModel, exc)}"
         raise ConfigError(msg) from None
     except (ConfigCheckError, ProviderRegistryError) as exc:

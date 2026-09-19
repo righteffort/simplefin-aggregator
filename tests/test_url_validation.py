@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
-"""Tests for url_validation.py's provider-root matching.
+"""Tests for url_validation.py's provider-origin matching.
 
 `.invalid` (RFC 2606) is reserved and guaranteed never to resolve, so it is
 safe as a stand-in provider host with no risk of a real lookup.
@@ -16,21 +16,22 @@ from __future__ import annotations
 
 import pytest
 
+from sf_agg import cli
 from sf_agg.url_validation import (
     UrlValidationError,
     is_loopback_host,
-    parse_root,
+    parse_origin,
     parse_url,
     validate_access_url,
     validate_claim_url,
 )
 
 
-ROOT = parse_root("https://simplefin.invalid/simplefin")
-LOOPBACK_ROOT = parse_root("http://127.0.0.1/simplefin")
-# A second provider root, for the case where the pasted token is genuine but
+ORIGIN = parse_origin("https://simplefin.invalid")
+LOOPBACK_ORIGIN = parse_origin("http://127.0.0.1")
+# A second provider origin, for the case where the pasted token is genuine but
 # the user picked the wrong entry from the claim menu.
-OTHER_ROOT = parse_root("https://other-provider.invalid/simplefin")
+OTHER_ORIGIN = parse_origin("https://other-provider.invalid")
 
 # Stands in for the one-time setup token a real claim URL carries in its path.
 SETUP_TOKEN = "s3cret-setup-token"  # noqa: S105
@@ -41,17 +42,17 @@ PROVIDER = "test-provider"
 CLAIM_URL_CASES: list[tuple[str, bool]] = [
     ("https://simplefin.invalid/simplefin/claim/tok", True),
     # Scheme and host are case-insensitive to DNS and to TLS alike, so a URL
-    # differing from the root only in their case names the same origin. The
-    # path is not case-folded.
+    # differing from the origin only in their case names the same origin.
     ("https://SIMPLEFIN.INVALID/simplefin/claim/tok", True),
-    ("https://simplefin.invalid/SIMPLEFIN/claim/tok", False),
+    # Any path on the origin: what the provider serves there is its own.
+    ("https://simplefin.invalid/SIMPLEFIN/claim/tok", True),
+    ("https://simplefin.invalid/elsewhere/claim/tok", True),
     # A trailing dot names the same host to DNS, but is left as a distinct
     # string. Behavior, not a requirement: normalizing it would be as correct.
     ("https://simplefin.invalid./simplefin/claim/tok", False),
     ("https://simplefin.invalid@evil.example/simplefin/claim/tok", False),
     ("https://simplefin.invalid.evil.example/simplefin/claim/tok", False),
     ("https://evil.example/simplefin.invalid/claim/tok", False),
-    ("https://simplefin.invalid/simplefin-evil/claim/tok", False),
     ("https://simplefin.invalid:8443/simplefin/claim/tok", False),
     # The scheme's default port names the same origin as no port at all.
     ("https://simplefin.invalid:443/simplefin/claim/tok", True),
@@ -64,28 +65,26 @@ CLAIM_URL_CASES: list[tuple[str, bool]] = [
     # A bare delimiter with nothing after it is still a query or a fragment.
     ("https://simplefin.invalid/simplefin/claim/tok?", False),
     ("https://simplefin.invalid/simplefin/claim/tok#", False),
-    # An empty path segment, left as written. Behavior, not a requirement.
-    ("https://simplefin.invalid//simplefin/claim/tok", False),
 ]
 
 
 @pytest.mark.parametrize(("raw", "accepted"), CLAIM_URL_CASES)
 def test_validate_claim_url_table(raw: str, *, accepted: bool) -> None:
     if accepted:
-        _ = validate_claim_url(ROOT, raw, provider=PROVIDER)
+        _ = validate_claim_url(ORIGIN, raw, provider=PROVIDER)
     else:
         with pytest.raises(UrlValidationError):
-            _ = validate_claim_url(ROOT, raw, provider=PROVIDER)
+            _ = validate_claim_url(ORIGIN, raw, provider=PROVIDER)
 
 
 HOMOGRAPH_HOST = "simplefin.invalid".replace("p", "\u0440")  # Cyrillic er, drawn like p
 
 
 def test_validate_claim_url_rejects_unicode_homograph() -> None:
-    """A host that merely draws like the root's host is a different host, and must not match."""
+    """A host that merely draws like the provider's host is a different host, and must not match."""
     with pytest.raises(UrlValidationError) as exc_info:
         _ = validate_claim_url(
-            ROOT, f"https://{HOMOGRAPH_HOST}/simplefin/claim/tok", provider=PROVIDER
+            ORIGIN, f"https://{HOMOGRAPH_HOST}/simplefin/claim/tok", provider=PROVIDER
         )
     assert "is not valid for provider" in str(exc_info.value)
 
@@ -94,7 +93,7 @@ def test_validate_claim_url_error_never_renders_a_unicode_host() -> None:
     """The message names the punycode form: legible, and not mistakable for the real host."""
     with pytest.raises(UrlValidationError) as exc_info:
         _ = validate_claim_url(
-            ROOT, f"https://{HOMOGRAPH_HOST}/simplefin/claim/tok", provider=PROVIDER
+            ORIGIN, f"https://{HOMOGRAPH_HOST}/simplefin/claim/tok", provider=PROVIDER
         )
     message = str(exc_info.value)
     assert HOMOGRAPH_HOST not in message
@@ -112,7 +111,7 @@ CLAIM_URLS_WITH_CREDENTIALS = [
 @pytest.mark.parametrize("raw", CLAIM_URLS_WITH_CREDENTIALS)
 def test_validate_claim_url_rejects_credentials(raw: str) -> None:
     with pytest.raises(UrlValidationError, match="must not contain credentials"):
-        _ = validate_claim_url(ROOT, raw, provider=PROVIDER)
+        _ = validate_claim_url(ORIGIN, raw, provider=PROVIDER)
 
 
 EMPTY_USERINFO_URLS = [
@@ -128,19 +127,21 @@ def test_validate_claim_url_accepts_an_empty_userinfo_section(raw: str) -> None:
     Behavior, not a requirement: rejecting the section outright would be
     equally correct, and no provider emits one.
     """
-    url = validate_claim_url(ROOT, raw, provider=PROVIDER)
+    url = validate_claim_url(ORIGIN, raw, provider=PROVIDER)
 
     assert url.has_creds is False
     assert url.origin_and_path == "https://simplefin.invalid/simplefin/claim/tok"
 
 
-def test_validate_claim_url_message_names_origin_provider_and_expected_root() -> None:
+def test_validate_claim_url_message_names_origin_provider_and_expected_origin() -> None:
     with pytest.raises(UrlValidationError) as exc_info:
-        _ = validate_claim_url(ROOT, "https://evil.example/simplefin/claim/tok", provider=PROVIDER)
+        _ = validate_claim_url(
+            ORIGIN, "https://evil.example/simplefin/claim/tok", provider=PROVIDER
+        )
     message = str(exc_info.value)
     assert "https://evil.example" in message
     assert PROVIDER in message
-    assert ROOT.origin_and_path in message
+    assert f"expected {ORIGIN}" in message
 
 
 LOOPBACK_HOST_CASES: list[tuple[str, bool]] = [
@@ -160,55 +161,22 @@ def test_is_loopback_host_accepts_only_literal_addresses(host: str, *, expected:
     assert is_loopback_host(host) is expected
 
 
-DOT_SEGMENT_URLS = [
-    "https://simplefin.invalid/simplefin/../../evil",
-    "https://simplefin.invalid/simplefin/./claim/tok",
-    "https://simplefin.invalid/simplefin/..",
-    # RFC 3986 makes %2E equivalent to "." once normalized, so the encoded
-    # spellings are rejected as well.
-    "https://simplefin.invalid/simplefin/%2e%2e/evil",
-    "https://simplefin.invalid/simplefin/%2E%2E/evil",
-    # A percent-encoded slash: an origin server that decodes it sees a ".."
-    # segment where the path as written shows none.
-    "https://simplefin.invalid/simplefin/%2f../evil",
+PATHS_THAT_A_SERVER_MIGHT_RESOLVE = [
+    "https://simplefin.invalid/simplefin/../../evil.example/claim/tok",
+    "https://simplefin.invalid/simplefin/%2e%2e/%2e%2e/evil.example/claim/tok",
+    "https://simplefin.invalid//evil.example/claim/tok",
+    "https://simplefin.invalid/%2f%2fevil.example/claim/tok",
+    "https://simplefin.invalid/simplefin/%2f../evil.example/claim/tok",
 ]
 
 
-@pytest.mark.parametrize("raw", DOT_SEGMENT_URLS)
-def test_parse_url_rejects_dot_segments(raw: str) -> None:
-    with pytest.raises(UrlValidationError, match="path segment"):
-        _ = parse_url(raw)
+@pytest.mark.parametrize("raw", PATHS_THAT_A_SERVER_MIGHT_RESOLVE)
+def test_a_path_cannot_move_the_fetched_url_off_the_matched_origin(raw: str) -> None:
+    url = validate_claim_url(ORIGIN, raw, provider=PROVIDER)
+    with cli._build_claim_client() as claim_client:  # pyright: ignore[reportPrivateUsage]
+        request = claim_client.build_request("POST", url.origin_and_path)
 
-
-DOTTED_BUT_LEGITIMATE_URLS = [
-    # Dots inside a segment are ordinary characters, not dot segments.
-    "https://simplefin.invalid/simplefin/a.b/claim/tok",
-    "https://simplefin.invalid/simplefin/..c/claim/tok",
-    "https://simplefin.invalid/simplefin/tok...",
-]
-
-
-@pytest.mark.parametrize("raw", DOTTED_BUT_LEGITIMATE_URLS)
-def test_parse_url_allows_dots_inside_a_segment(raw: str) -> None:
-    assert parse_url(raw).origin_and_path == raw
-
-
-def test_dot_segments_cannot_escape_the_provider_root() -> None:
-    """The prefix test reads a path literally; whoever resolves it does not.
-
-    Without this rejection "/simplefin/../../evil" prefix-matches a
-    "/simplefin/" root as a string, and the provider's credentials then go to
-    "/evil".
-    """
-    escaping = "https://user:pass@simplefin.invalid/simplefin/../../evil"
-
-    with pytest.raises(UrlValidationError, match="path segment"):
-        _ = validate_access_url(ROOT, escaping, provider=PROVIDER)
-
-
-def test_parse_root_rejects_dot_segments() -> None:
-    with pytest.raises(UrlValidationError, match="path segment"):
-        _ = parse_root("https://simplefin.invalid/simplefin/../other")
+    assert f"{request.url.scheme}://{request.url.netloc.decode('ascii')}" == ORIGIN
 
 
 def test_origin_excludes_the_path() -> None:
@@ -226,7 +194,7 @@ def test_mismatch_message_withholds_the_setup_token() -> None:
     """
     with pytest.raises(UrlValidationError) as exc_info:
         _ = validate_claim_url(
-            OTHER_ROOT,
+            OTHER_ORIGIN,
             f"https://simplefin.invalid/simplefin/claim/{SETUP_TOKEN}",
             provider=PROVIDER,
         )
@@ -237,7 +205,9 @@ def test_mismatch_message_withholds_the_setup_token() -> None:
 def test_claim_url_credentials_message_withholds_the_setup_token() -> None:
     with pytest.raises(UrlValidationError) as exc_info:
         _ = validate_claim_url(
-            ROOT, f"https://u:p@simplefin.invalid/simplefin/claim/{SETUP_TOKEN}", provider=PROVIDER
+            ORIGIN,
+            f"https://u:p@simplefin.invalid/simplefin/claim/{SETUP_TOKEN}",
+            provider=PROVIDER,
         )
 
     assert SETUP_TOKEN not in str(exc_info.value)
@@ -252,8 +222,8 @@ def test_query_string_message_withholds_the_setup_token() -> None:
 
 LOOPBACK_CASES: list[tuple[str, bool]] = [
     ("http://127.0.0.1/simplefin/claim/tok", True),
-    # The entry is rooted at http, so https is a different origin string and
-    # does not match it.
+    # The entry's origin is http, so https is a different origin and does not
+    # match it.
     ("https://127.0.0.1/simplefin/claim/tok", False),
     ("http://localhost/simplefin/claim/tok", False),
     ("http://127.0.0.2/simplefin/claim/tok", False),
@@ -263,15 +233,15 @@ LOOPBACK_CASES: list[tuple[str, bool]] = [
 @pytest.mark.parametrize(("raw", "accepted"), LOOPBACK_CASES)
 def test_validate_claim_url_loopback_table(raw: str, *, accepted: bool) -> None:
     if accepted:
-        _ = validate_claim_url(LOOPBACK_ROOT, raw, provider=PROVIDER)
+        _ = validate_claim_url(LOOPBACK_ORIGIN, raw, provider=PROVIDER)
     else:
         with pytest.raises(UrlValidationError):
-            _ = validate_claim_url(LOOPBACK_ROOT, raw, provider=PROVIDER)
+            _ = validate_claim_url(LOOPBACK_ORIGIN, raw, provider=PROVIDER)
 
 
-def test_validate_access_url_accepts_the_root_itself_with_credentials() -> None:
+def test_validate_access_url_accepts_credentials_on_the_provider_origin() -> None:
     url = validate_access_url(
-        ROOT, "https://user:pass@simplefin.invalid/simplefin", provider=PROVIDER
+        ORIGIN, "https://user:pass@simplefin.invalid/simplefin", provider=PROVIDER
     )
     assert url.username == "user"
     assert url.password == "pass"  # noqa: S105
@@ -288,18 +258,20 @@ ACCESS_URLS_WITHOUT_CREDENTIALS = [
 @pytest.mark.parametrize("raw", ACCESS_URLS_WITHOUT_CREDENTIALS)
 def test_validate_access_url_requires_credentials(raw: str) -> None:
     with pytest.raises(UrlValidationError, match="must contain credentials"):
-        _ = validate_access_url(ROOT, raw, provider=PROVIDER)
+        _ = validate_access_url(ORIGIN, raw, provider=PROVIDER)
 
 
 def test_validate_access_url_rejects_different_host() -> None:
     with pytest.raises(UrlValidationError):
-        _ = validate_access_url(ROOT, "https://user:pass@evil.example/simplefin", provider=PROVIDER)
+        _ = validate_access_url(
+            ORIGIN, "https://user:pass@evil.example/simplefin", provider=PROVIDER
+        )
 
 
 def test_validate_access_url_rejects_fragment() -> None:
     with pytest.raises(UrlValidationError):
         _ = validate_access_url(
-            ROOT, "https://user:pass@simplefin.invalid/simplefin#frag", provider=PROVIDER
+            ORIGIN, "https://user:pass@simplefin.invalid/simplefin#frag", provider=PROVIDER
         )
 
 
@@ -308,13 +280,13 @@ def test_validate_access_url_rejects_trailing_question_mark() -> None:
     # request path appended to it.
     with pytest.raises(UrlValidationError):
         _ = validate_access_url(
-            ROOT, "https://user:pass@simplefin.invalid/simplefin?", provider=PROVIDER
+            ORIGIN, "https://user:pass@simplefin.invalid/simplefin?", provider=PROVIDER
         )
 
 
 def test_access_url_origin_and_path_excludes_credentials() -> None:
     url = validate_access_url(
-        ROOT, "https://user:hunter2@simplefin.invalid/simplefin", provider=PROVIDER
+        ORIGIN, "https://user:hunter2@simplefin.invalid/simplefin", provider=PROVIDER
     )
     assert url.origin_and_path == "https://simplefin.invalid/simplefin"
     assert "hunter2" not in url.origin_and_path
@@ -323,60 +295,56 @@ def test_access_url_origin_and_path_excludes_credentials() -> None:
 def test_access_url_error_message_excludes_credentials() -> None:
     with pytest.raises(UrlValidationError) as exc_info:
         _ = validate_access_url(
-            ROOT, "https://user:hunter2@evil.example/simplefin", provider=PROVIDER
+            ORIGIN, "https://user:hunter2@evil.example/simplefin", provider=PROVIDER
         )
     assert "hunter2" not in str(exc_info.value)
 
 
-def test_parse_root_appends_missing_trailing_slash() -> None:
-    assert parse_root("https://simplefin.invalid/simplefin").origin_and_path == (
-        "https://simplefin.invalid/simplefin/"
-    )
+PARSE_ORIGIN_CASES = [
+    ("https://simplefin.invalid", "https://simplefin.invalid"),
+    ("https://simplefin.invalid/", "https://simplefin.invalid"),
+    ("https://SIMPLEFIN.INVALID:443", "https://simplefin.invalid"),
+    ("https://simplefin.invalid:8443", "https://simplefin.invalid:8443"),
+    ("http://127.0.0.1:8888", "http://127.0.0.1:8888"),
+    ("http://[::1]", "http://[::1]"),
+]
 
 
-def test_parse_root_keeps_existing_trailing_slash() -> None:
-    assert parse_root("https://simplefin.invalid/simplefin/").origin_and_path == (
-        "https://simplefin.invalid/simplefin/"
-    )
+@pytest.mark.parametrize(("raw", "expected"), PARSE_ORIGIN_CASES)
+def test_parse_origin_returns_the_normalized_origin(raw: str, expected: str) -> None:
+    assert parse_origin(raw) == expected
 
 
-def test_parse_root_with_no_path_gets_a_slash() -> None:
-    assert parse_root("https://simplefin.invalid").origin_and_path == "https://simplefin.invalid/"
+def test_parse_origin_rejects_a_path_without_naming_it() -> None:
+    with pytest.raises(UrlValidationError, match="must not have a path") as exc_info:
+        _ = parse_origin("https://simplefin.invalid/capability-token")
+
+    assert "capability-token" not in str(exc_info.value)
 
 
-def test_parse_root_accepts_http_for_literal_loopback() -> None:
-    assert parse_root("http://127.0.0.1:8888/simplefin").origin_and_path == (
-        "http://127.0.0.1:8888/simplefin/"
-    )
-
-
-def test_parse_root_accepts_http_for_ipv6_loopback_and_keeps_brackets() -> None:
-    assert parse_root("http://[::1]/simplefin").origin_and_path == "http://[::1]/simplefin/"
-
-
-def test_parse_root_rejects_http_for_localhost_by_name() -> None:
+def test_parse_origin_rejects_http_for_localhost_by_name() -> None:
     with pytest.raises(UrlValidationError, match="loopback"):
-        _ = parse_root("http://localhost/simplefin")
+        _ = parse_origin("http://localhost")
 
 
-def test_parse_root_rejects_http_for_non_loopback_host() -> None:
+def test_parse_origin_rejects_http_for_non_loopback_host() -> None:
     with pytest.raises(UrlValidationError, match="loopback"):
-        _ = parse_root("http://simplefin.invalid/simplefin")
+        _ = parse_origin("http://simplefin.invalid")
 
 
-def test_parse_root_rejects_non_http_scheme() -> None:
-    with pytest.raises(UrlValidationError):
-        _ = parse_root("ftp://simplefin.invalid/simplefin")
+def test_parse_origin_rejects_non_http_scheme() -> None:
+    with pytest.raises(UrlValidationError, match="must use https"):
+        _ = parse_origin("ftp://simplefin.invalid")
 
 
-def test_parse_root_rejects_credentials() -> None:
+def test_parse_origin_rejects_credentials() -> None:
     with pytest.raises(UrlValidationError, match="must not contain credentials"):
-        _ = parse_root("https://user:pass@simplefin.invalid/simplefin")
+        _ = parse_origin("https://user:pass@simplefin.invalid")
 
 
-def test_parse_root_rejects_query() -> None:
-    with pytest.raises(UrlValidationError):
-        _ = parse_root("https://simplefin.invalid/simplefin?x=1")
+def test_parse_origin_rejects_query() -> None:
+    with pytest.raises(UrlValidationError, match="query string"):
+        _ = parse_origin("https://simplefin.invalid/?x=1")
 
 
 def test_parse_url_brackets_ipv6_host() -> None:
@@ -452,21 +420,20 @@ def test_parse_url_requires_a_port_in_range(raw: str, *, accepted: bool) -> None
             _ = parse_url(raw)
 
 
-def test_a_password_ending_the_authority_early_is_not_detected() -> None:
-    """Behavior, not a requirement: a deliberate gap, pinned so it reads as known.
+UNENCODED_DELIMITER_IN_PASSWORD_URLS = [
+    # Digits before the delimiter read as a port, leaving no credentials.
+    "https://user:8443/xyz@simplefin.invalid/simplefin",
+    "https://user:8443?xyz@simplefin.invalid/simplefin",
+    "https://user:8443#xyz@simplefin.invalid/simplefin",
+    # Anything else there is not a port.
+    "https://user:pa/ss@simplefin.invalid/simplefin",
+]
 
-    An unencoded "/" in a password ends the authority before the "@", so the
-    parse puts the credentials in the host, the port and the path instead --
-    where stripping the userinfo cannot reach them, and a message about the URL
-    can name part of one. Closing it costs more than the case is worth, and
-    such a URL is malformed anyway: a password has to percent-encode "/", or no
-    client would send it as a credential.
-    """
-    url = parse_url("https://user:8443/xyz@simplefin.invalid/simplefin")
 
-    assert url.host == "user"
-    assert url.port == 8443  # noqa: PLR2004 -- the password prefix, read as a port
-    assert url.has_creds is False
+@pytest.mark.parametrize("raw", UNENCODED_DELIMITER_IN_PASSWORD_URLS)
+def test_access_url_with_a_delimiter_unencoded_in_its_password_is_rejected(raw: str) -> None:
+    with pytest.raises(UrlValidationError):
+        _ = validate_access_url(ORIGIN, raw, provider=PROVIDER)
 
 
 def test_parse_url_rejects_missing_host() -> None:
@@ -509,10 +476,8 @@ SECRET = "s3cret-provider-password"  # noqa: S105
 
 # A password sitting where a password belongs, spelled in ways that make the
 # parse fail or make it disagree about where the authority ends. However the
-# URL is rejected, the message must not quote the password. The limit is
-# `test_a_password_ending_the_authority_early_is_not_detected`: a password that
-# lands in the host or the port is no longer distinguishable from one, and can
-# be named.
+# URL is rejected, the message must not quote the password. The limit is the
+# one `UrlValidationError` states: digits read as a port can be named.
 REJECTED_URLS_CARRYING_A_SECRET = [
     f"https://user:{SECRET}/x@simplefin.invalid/simplefin",
     f"https://user:{SECRET}?x@simplefin.invalid/simplefin",
@@ -524,7 +489,6 @@ REJECTED_URLS_CARRYING_A_SECRET = [
     f"user:{SECRET}@simplefin.invalid/simplefin",
     f"https://user:1024?{SECRET}@simplefin.invalid/simplefin",
     f"https://user:{SECRET}@simplefin.invalid:99999/simplefin",
-    f"https://user:{SECRET}@simplefin.invalid/simplefin/../evil",
 ]
 
 
@@ -540,8 +504,8 @@ def test_rejected_url_message_does_not_quote_the_password(raw: str) -> None:
 
 
 # Characters a URL may not carry literally, which are percent-encoded rather
-# than rejected. The requirement is only that the result is safe to print --
-# see test_accepted_urls_render_as_printable_ascii; the exact encoding is
+# than rejected. The requirement is only that the result is safe to print and
+# to send -- see test_accepted_urls_render_as_printable_ascii; the exact encoding is
 # httpx2's, so these expectations are behavior, not a requirement.
 PERCENT_ENCODED_URLS = [
     ("https://simplefin.invalid/simplefin/tok with space", "/simplefin/tok%20with%20space"),
@@ -559,10 +523,10 @@ def test_parse_url_percent_encodes_characters_not_legal_in_a_path(
 
 
 def test_claim_url_with_escapes_on_the_right_host_is_still_rejected() -> None:
-    # Passing the root check is not enough to be echoed safely.
+    # Passing the origin check is not enough to be echoed safely.
     with pytest.raises(UrlValidationError):
         _ = validate_claim_url(
-            ROOT, "https://simplefin.invalid/simplefin/\x1b[2Jowned", provider=PROVIDER
+            ORIGIN, "https://simplefin.invalid/simplefin/\x1b[2Jowned", provider=PROVIDER
         )
 
 
@@ -573,7 +537,7 @@ def test_claim_url_with_escapes_on_the_right_host_is_still_rejected() -> None:
 ACCEPTED_URLS = [
     "https://simplefin.invalid",
     # parse_url does not restrict the scheme; a non-http one simply fails to
-    # match any root. Behavior, not a requirement.
+    # match any provider. Behavior, not a requirement.
     "ftp://127.0.0.1/simplefin/claim/tok",
     "https://simplefin.invalid/simplefin/claim/tok",
     "https://SIMPLEFIN.INVALID/simplefin/claim/tok",
@@ -588,18 +552,19 @@ ACCEPTED_URLS = [
     f"https://{HOMOGRAPH_HOST}/simplefin",
     "https://xn--sslfin-r3ad.invalid/x",
     "https://simplefin.invalid/tok%zz",  # a malformed escape, passed through as written
-    *DOTTED_BUT_LEGITIMATE_URLS,
+    "https://simplefin.invalid/simplefin/a.b/claim/tok",
+    *PATHS_THAT_A_SERVER_MIGHT_RESOLVE,
     *(raw for raw, _ in PERCENT_ENCODED_URLS),
 ]
 
 
 @pytest.mark.parametrize("raw", ACCEPTED_URLS)
 def test_accepted_urls_render_as_printable_ascii(raw: str) -> None:
-    """Whatever is accepted must be safe to print in an error message.
+    """Whatever is accepted is safe to print in an error message and to send.
 
-    Both strings are shown to the user, so however exotic the input, neither
-    may come back carrying an ANSI escape, an invisible character, or a
-    Unicode host that draws like another one.
+    `origin` is shown to the user and `origin_and_path` goes on the wire, so
+    however exotic the input, neither may come back carrying an ANSI escape, an
+    invisible character, or a Unicode host that draws like another one.
     """
     url = parse_url(raw)
 

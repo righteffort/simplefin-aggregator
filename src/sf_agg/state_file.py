@@ -74,7 +74,7 @@ def _safe_location(model: type[BaseModel], location: tuple[int | str, ...]) -> s
 
     The limit is that only the top-level model's fields are recognized, so a
     location inside a nested model stops at the index that identifies it --
-    `custom_providers.0` rather than `custom_providers.0.root`. Recovering the
+    `custom_providers.0` rather than `custom_providers.0.origin`. Recovering the
     rest means walking the model graph through every typing construct the
     schema uses, which is a great deal of machinery to sit in the path that
     must not leak.

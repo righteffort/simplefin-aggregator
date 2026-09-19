@@ -13,9 +13,9 @@ if TYPE_CHECKING:
     from sf_agg.config import Config
 
 
-A = ProviderSpec(key="bank-a", root="https://bank-a.example.com/simplefin")
-B = ProviderSpec(key="bank-b", root="https://bank-b.example.com/simplefin")
-C = ProviderSpec(key="bank-c", root="https://bank-c.example.com/simplefin")
+A = ProviderSpec(key="bank-a", origin="https://bank-a.example.com")
+B = ProviderSpec(key="bank-b", origin="https://bank-b.example.com")
+C = ProviderSpec(key="bank-c", origin="https://bank-c.example.com")
 
 
 def test_an_id_resolves_to_the_provider_whose_prefix_it_carries() -> None:
@@ -45,7 +45,7 @@ def test_the_blank_prefix_takes_only_the_ids_no_other_prefix_claims() -> None:
     It matches every id, so a first-match implementation would hand it ids
     belonging to the provider named in them.
     """
-    config = make_config(ProviderSpec(key="bank-a", root=A.root, prefix=""), B)
+    config = make_config(ProviderSpec(key="bank-a", origin=A.origin, prefix=""), B)
 
     claimed = resolve_providers_for_account("bank-b:acc-1", config.providers)
     unclaimed = resolve_providers_for_account("plain-id", config.providers)
@@ -61,8 +61,8 @@ def test_the_longest_matching_prefix_wins_over_a_shorter_one() -> None:
     does with a provider list assembled some other way -- keeping the rule the
     blank prefix relies on true in general rather than by luck.
     """
-    outer = ProviderSpec(key="bank-a", root=A.root, prefix="b:")
-    inner = ProviderSpec(key="bank-b", root=B.root, prefix="b:sub:")
+    outer = ProviderSpec(key="bank-a", origin=A.origin, prefix="b:")
+    inner = ProviderSpec(key="bank-b", origin=B.origin, prefix="b:sub:")
     providers = [make_config(outer).providers[0], make_config(inner).providers[0]]
 
     resolved = resolve_providers_for_account("b:sub:acc-1", providers)

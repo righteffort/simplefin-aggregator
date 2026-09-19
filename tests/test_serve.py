@@ -33,7 +33,7 @@ base_url = "http://127.0.0.1:9999"
 
 [[custom_providers]]
 key = "my-bank"
-root = "https://provider.example.com/simplefin"
+origin = "https://provider.example.com"
 
 [[providers]]
 key = "my-bank"
@@ -48,7 +48,7 @@ SECOND_PROVIDER_TOML = (
     + """
 [[custom_providers]]
 key = "other-bank"
-root = "https://other.example.com/simplefin"
+origin = "https://other.example.com"
 
 [[providers]]
 key = "other-bank"
@@ -215,33 +215,31 @@ def test_serve_fails_when_one_of_several_providers_has_not_been_claimed(
 def test_serve_reports_every_unresolved_provider_at_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Neither an unclaimed provider nor a root mismatch hides the other's report."""
-    moved_root = SECOND_PROVIDER_TOML.replace(
-        'root = "https://provider.example.com/simplefin"',
-        'root = "https://moved.example.com/simplefin"',
+    """Neither an unclaimed provider nor an origin mismatch hides the other's report."""
+    moved_origin = SECOND_PROVIDER_TOML.replace(
+        'origin = "https://provider.example.com"', 'origin = "https://moved.example.com"'
     )
-    _ = _write_config(tmp_path, moved_root)
-    _claim(tmp_path)  # claimed for 'my-bank', whose root just moved
+    _ = _write_config(tmp_path, moved_origin)
+    _claim(tmp_path)  # claimed for 'my-bank', whose origin just moved
     calls = _fake_uvicorn(monkeypatch)
 
     result = _run_serve(tmp_path)
 
     assert result.exit_code == 1
     assert calls == []
-    assert "https://moved.example.com/simplefin/" in result.stderr
+    assert "expected https://moved.example.com" in result.stderr
     assert "no access URL stored for provider 'other-bank'" in result.stderr
     assert "s3cret-provider-password" not in result.stderr
 
 
-def test_serve_fails_when_the_stored_access_url_no_longer_matches_the_root(
+def test_serve_fails_when_the_stored_access_url_no_longer_matches_the_origin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Config drift: the entry's root was edited after the URL was claimed."""
-    moved_root = VALID_TOML.replace(
-        'root = "https://provider.example.com/simplefin"',
-        'root = "https://other.example.com/simplefin"',
+    """Config drift: the entry's origin was edited after the URL was claimed."""
+    moved_origin = VALID_TOML.replace(
+        'origin = "https://provider.example.com"', 'origin = "https://other.example.com"'
     )
-    _ = _write_config(tmp_path, moved_root)
+    _ = _write_config(tmp_path, moved_origin)
     _claim(tmp_path)
     calls = _fake_uvicorn(monkeypatch)
 
@@ -249,7 +247,7 @@ def test_serve_fails_when_the_stored_access_url_no_longer_matches_the_root(
 
     assert result.exit_code == 1
     assert calls == []
-    assert "https://other.example.com/simplefin/" in result.stderr
+    assert "expected https://other.example.com" in result.stderr
     assert "s3cret-provider-password" not in result.stderr
 
 

@@ -84,17 +84,17 @@ class ProviderAccessUrlError(Exception):
 def _resolve_access_url(
     config: Config, access_urls: Mapping[str, SecretStr], key: str
 ) -> NormalizedUrl:
-    """Validate one stored access URL against that provider's current root.
+    """Validate one stored access URL against that provider's current origin.
 
     A single-entry comparison, not a scan: the URL was claimed from one
-    specific provider, so it is that provider's root it has to still match.
+    specific provider, so it is that provider's origin it has to still match.
     """
     entry = find_provider(config.provider_entries(), key)
     stored = access_urls.get(key)
     if stored is None:
         msg = f"no access URL stored for provider {key!r}; run `claim` first"
         raise StateFileError(msg)
-    return validate_access_url(entry.root, stored.get_secret_value(), provider=key)
+    return validate_access_url(entry.origin, stored.get_secret_value(), provider=key)
 
 
 def _resolve_all_access_urls(
@@ -249,8 +249,8 @@ def create_app(
     """Build the FastAPI app for a config, the claimed access URLs, and the aggregator creds store.
 
     Raises rather than starting a server that cannot work: every configured
-    provider that has no stored access URL, or holds one that no longer matches
-    its root, is named together, via `ProviderAccessUrlError`, before uvicorn
+    provider that has no stored access URL, or holds one `validate_access_url`
+    rejects, is named together, via `ProviderAccessUrlError`, before uvicorn
     starts and not on the first request. This is all-or-nothing where
     a provider that fails a live request costs only its own accounts.
 
@@ -279,11 +279,8 @@ def create_app(
     @app.post(f"{CLAIM_PATH_PREFIX}{{claim_secret}}")
     async def claim(claim_secret: str) -> PlainTextResponse:  # pyright: ignore [reportUnusedFunction]
         try:
-            # Persisted before it is answered: crashing after the write costs a
-            # setup token the operator replaces with `client reset`, while
-            # crashing after the response leaves the client app holding
-            # credentials this server does not recognize -- a setup that looks
-            # complete and silently never syncs.
+            # Recorded before it is returned: an access URL the store has no
+            # record of would never work.
             credentials = await run_in_threadpool(
                 _exchange_setup_token, agg_creds_path, claim_secret
             )

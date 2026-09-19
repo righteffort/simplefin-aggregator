@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, quote, urlsplit
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping, Sequence
 
-ROOT_PATH = "/simplefin"
+BASE_PATH = "/simplefin"
 
 
 @dataclass(frozen=True)
@@ -38,17 +38,17 @@ class FakeUser:
 
 @dataclass(frozen=True)
 class RunningFake:
-    root: str
+    origin: str
 
     def setup_token(self, user: FakeUser) -> str:
-        claim_url = f"{self.root}/claim/{user.claim_secret}"
+        claim_url = f"{self.origin}{BASE_PATH}/claim/{user.claim_secret}"
         return base64.b64encode(claim_url.encode("ascii")).decode("ascii")
 
 
-def _access_url(root: str, user: FakeUser) -> str:
-    scheme, rest = root.split("://", 1)
+def _access_url(origin: str, user: FakeUser) -> str:
+    scheme, host = origin.split("://", 1)
     userinfo = f"{quote(user.username, safe='')}:{quote(user.password, safe='')}"
-    return f"{scheme}://{userinfo}@{rest}"
+    return f"{scheme}://{userinfo}@{host}{BASE_PATH}"
 
 
 @contextmanager
@@ -67,7 +67,7 @@ def sf_server_fake(
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
-            secret = self.path.removeprefix(f"{ROOT_PATH}/claim/")
+            secret = self.path.removeprefix(f"{BASE_PATH}/claim/")
             if secret == self.path:
                 self._reply(HTTPStatus.NOT_FOUND, b"")
             elif secret in access_urls:
@@ -77,7 +77,7 @@ def sf_server_fake(
 
         def do_GET(self) -> None:
             url = urlsplit(self.path)
-            if url.path != f"{ROOT_PATH}/accounts":
+            if url.path != f"{BASE_PATH}/accounts":
                 self._reply(HTTPStatus.NOT_FOUND, b"")
             elif self.headers.get("Authorization") not in basic_auth:
                 self._reply(HTTPStatus.FORBIDDEN, b"")
@@ -101,8 +101,8 @@ def sf_server_fake(
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     port = cast(tuple[str, int], server.server_address)[1]
-    running = RunningFake(root=f"http://127.0.0.1:{port}{ROOT_PATH}")
-    access_urls.update({user.claim_secret: _access_url(running.root, user) for user in users})
+    running = RunningFake(origin=f"http://127.0.0.1:{port}")
+    access_urls.update({user.claim_secret: _access_url(running.origin, user) for user in users})
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:

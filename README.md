@@ -65,7 +65,7 @@ a third party that isn't built in, or a provider you run yourself:
 ```toml
 [[custom_providers]]
 key = "my-provider"
-root = "https://simplefin.example.com/simplefin"
+origin = "https://simplefin.example.com"
 
 [[providers]]
 key = "my-provider"
@@ -73,10 +73,9 @@ key = "my-provider"
 
 `key` is the name you refer to it by; it must match `[a-z0-9][a-z0-9-]*` and
 must be unique. It is also what the claim menu shows for this provider.
-`root` (with `/` appended if it is not specified) is
-the prefix of the provider's claim and access URLs. `root`'s scheme must be
-`https`, unless the host is a literal loopback IP address such as
-`127.0.0.1` or `[::1]`.
+`origin` is the scheme, host and optional port that the provider's claim and
+access URLs are on, with no path. Its scheme must be `https`, unless the host
+is a literal loopback IP address such as `127.0.0.1` or `[::1]`.
 
 Editing this file is deliberately the only way to add a provider, to
 discourage phishing modes such as trusting a malicious provider with a
@@ -89,7 +88,7 @@ internationalized host in its encoded form.
 
 **`config.toml` holds no credentials**, but keep it accessible only to its
 owner: anyone who can write it can move `bind_host` off the loopback interface
-or add a provider root of their own, and anyone who can write the directory it
+or add a provider origin of their own, and anyone who can write the directory it
 sits in can replace the files this application depends on. Commands that load
 `config.toml` or write to that directory warn you when either is open to other
 users.
@@ -126,11 +125,10 @@ that provider before changing your app to use this aggregator,** so that the acc
 ids do not change. Only one provider may have a blank
 prefix, unless you set `allow_multiple_blank_prefixes = true`.
 
-**If your client app already holds accounts from several providers, synced
-directly from each,** give each of them `prefix = ""` and set
-`allow_multiple_blank_prefixes = true` at the top of the config, before any
-`[[providers]]` entry. The account ids from all such providers are then
-unchanged. The setting relaxes no other rule about prefixes.
+**If your client app already uses multiple providers directly,** give each of
+them `prefix = ""` and set `allow_multiple_blank_prefixes = true` at the top of
+the config, before any `[[providers]]` entry. The account ids from all such
+providers are then unchanged. The setting relaxes no other rule about prefixes.
 
 With multiple blank-prefix providers, requests for account ids are sent to all
 of them. This has these consequences:
@@ -160,8 +158,8 @@ uv run sf-agg claim [<key>]
 `claim` prompts for the setup token, exchanges it for an access URL, and
 stores that in `provider_creds.json` in the config directory. It asks which
 provider the token came from unless `<key>` tells it. Naming the
-wrong provider is an error rather than a guess: the access URL a provider
-returns has to sit under the root that key names.
+wrong provider is an error rather than a guess: the setup token, and the
+access URL the provider returns, have to be on the origin that key names.
 
 If `claim` fails, you will need to retry. First, try running `claim`
 again with the same token. If it succeeds, you're done. If it does
@@ -330,7 +328,7 @@ The test suite fakes providers — it never addresses a host off this machine.
 
 `scripts/sf_agg_smoke.py` is a smoke test, run by CI after the test suite. It
 drives a real `sf-agg` server end to end, from exchanging provider setup tokens
-through a client app's sync, against two providers served on loopback by
+through a client app's requests, against two providers served on loopback by
 `scripts/sf_server_fake.py`.
 
 ## AI disclosure
