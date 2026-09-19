@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from sf_agg.agg_creds import agg_creds_path, update_agg_creds
-from sf_agg.auth import build_client_auth_dependency
+from sf_agg.app import _build_client_auth_dependency  # pyright: ignore[reportPrivateUsage]
 
 from .support import add_client, add_client_and_exchange
 
@@ -27,7 +27,7 @@ def _protected_client(config_dir: Path) -> TestClient:
 
     @app.get(
         "/protected",
-        dependencies=[Depends(build_client_auth_dependency(agg_creds_path(config_dir)))],
+        dependencies=[Depends(_build_client_auth_dependency(agg_creds_path(config_dir)))],
     )
     async def protected() -> dict[str, bool]:  # pyright: ignore [reportUnusedFunction]
         return {"ok": True}

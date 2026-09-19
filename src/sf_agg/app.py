@@ -8,34 +8,36 @@ import logging
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from functools import partial
 from http import HTTPStatus
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Annotated, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from starlette.concurrency import run_in_threadpool
 
 from .access_url import build_access_url
 from .agg_creds import (
     AccessUrlAuth,
+    ExchangedAggCreds,
     UnexchangedAggCreds,
     exchange_agg_creds,
+    load_agg_creds,
     matches,
     update_agg_creds,
 )
-from .auth import build_client_auth_dependency
 from .merge import merge
 from .provider_clients import build_provider_client
 from .provider_registry import find_provider
 from .provider_resolution import resolve_providers_for_account
-from .request_counter import RequestCounter
 from .state_file import StateFileError
 from .transport import fetch_all
 from .url_validation import UrlValidationError, validate_access_url
 
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Mapping, Sequence
+    from collections.abc import AsyncGenerator, Callable, Coroutine, Mapping, Sequence
     from pathlib import Path
 
     import httpx2
@@ -61,6 +63,8 @@ PROTOCOL_VERSION = "1.0"
 # apart.
 CLAIM_PATH_PREFIX = "/simplefin/claim/"
 
+_security = HTTPBasic(auto_error=False)
+
 
 class ProviderAccessUrlError(Exception):
     """One or more configured providers have no access URL that still works.
@@ -75,6 +79,53 @@ class ProviderAccessUrlError(Exception):
     def __init__(self, messages: Sequence[str]) -> None:
         super().__init__("\n".join(messages))
         self.messages = messages
+
+
+def _resolve_access_url(
+    config: Config, access_urls: Mapping[str, SecretStr], key: str
+) -> NormalizedUrl:
+    """Validate one stored access URL against that provider's current root.
+
+    A single-entry comparison, not a scan: the URL was claimed from one
+    specific provider, so it is that provider's root it has to still match.
+    """
+    entry = find_provider(config.provider_entries(), key)
+    stored = access_urls.get(key)
+    if stored is None:
+        msg = f"no access URL stored for provider {key!r}; run `claim` first"
+        raise StateFileError(msg)
+    return validate_access_url(entry.root, stored.get_secret_value(), provider=key)
+
+
+def _resolve_all_access_urls(
+    config: Config, access_urls: Mapping[str, SecretStr]
+) -> dict[str, NormalizedUrl]:
+    """Validate every configured provider's stored access URL.
+
+    Collects every provider's failure, so `create_app` reports them all
+    together.
+    """
+    resolved: dict[str, NormalizedUrl] = {}
+    errors: list[str] = []
+    for provider in config.providers:
+        try:
+            resolved[provider.key] = _resolve_access_url(config, access_urls, provider.key)
+        except (StateFileError, UrlValidationError) as exc:
+            errors.append(str(exc))
+    if errors:
+        raise ProviderAccessUrlError(errors)
+    return resolved
+
+
+@dataclass
+class _AppState:
+    """The one dynamically-typed attribute we hang off app.state."""
+
+    provider_clients: dict[str, httpx2.AsyncClient]
+
+
+def _get_app_state(request: Request) -> _AppState:
+    return cast(_AppState, request.app.state.app_state)  # pyright: ignore[reportAny]
 
 
 class _UnknownSetupTokenError(Exception):
@@ -112,52 +163,43 @@ def _exchange_setup_token(store_path: Path, claim_secret: str) -> AccessUrlAuth:
     return credentials
 
 
-@dataclass
-class _AppState:
-    """The one dynamically-typed attribute we hang off app.state."""
+def _build_client_auth_dependency(
+    store_path: Path,
+) -> Callable[[HTTPBasicCredentials | None], Coroutine[None, None, None]]:
+    """Return a FastAPI dependency that rejects requests lacking valid client credentials.
 
-    provider_clients: dict[str, httpx2.AsyncClient]
-    request_counter: RequestCounter
-
-
-def _get_app_state(request: Request) -> _AppState:
-    return cast(_AppState, request.app.state.app_state)  # pyright: ignore[reportAny]
-
-
-def _resolve_access_url(
-    config: Config, access_urls: Mapping[str, SecretStr], key: str
-) -> NormalizedUrl:
-    """Validate one stored access URL against that provider's current root.
-
-    A single-entry comparison, not a scan: the URL was claimed from one
-    specific provider, so it is that provider's root it has to still match.
+    Valid means the request's Basic Auth matches credentials some client
+    received by exchanging its setup token, as recorded in the store at
+    `store_path`. Anything else gets a 403.
     """
-    entry = find_provider(config.provider_entries(), key)
-    stored = access_urls.get(key)
-    if stored is None:
-        msg = f"no access URL stored for provider {key!r}; run `claim` first"
-        raise StateFileError(msg)
-    return validate_access_url(entry.root, stored.get_secret_value(), provider=key)
 
+    async def require_client_auth(
+        credentials: Annotated[HTTPBasicCredentials | None, Depends(_security)],
+    ) -> None:
+        if credentials is None:
+            raise HTTPException(status_code=403, detail="invalid client app credentials")
 
-def _resolve_all_access_urls(
-    config: Config, access_urls: Mapping[str, SecretStr]
-) -> dict[str, NormalizedUrl]:
-    """Validate every configured provider's stored access URL.
-
-    Collects every provider's failure, so `create_app` reports them all
-    together.
-    """
-    resolved: dict[str, NormalizedUrl] = {}
-    errors: list[str] = []
-    for provider in config.providers:
+        # Read on every request, with no cache and no reload signal: that is
+        # what makes `client revoke` take effect, and this is a few-KB file on a
+        # loopback server a client app polls a few times a day.
         try:
-            resolved[provider.key] = _resolve_access_url(config, access_urls, provider.key)
-        except (StateFileError, UrlValidationError) as exc:
-            errors.append(str(exc))
-    if errors:
-        raise ProviderAccessUrlError(errors)
-    return resolved
+            # Without the permission warning: this runs per request, and
+            # `serve` has already made that check once at startup.
+            creds = await run_in_threadpool(partial(load_agg_creds, store_path, warn=False))
+        except StateFileError:
+            # Fail closed. A store that cannot be read is one that names no
+            # client, and an unreadable store must not admit anyone.
+            creds = {}
+
+        if not any(
+            matches(credentials.username, record.username_sha256)
+            and matches(credentials.password, record.password_sha256)
+            for record in creds.values()
+            if isinstance(record, ExchangedAggCreds)
+        ):
+            raise HTTPException(status_code=403, detail="invalid client app credentials")
+
+    return require_client_auth
 
 
 def _forwarded_accounts_params(request: Request) -> list[tuple[str, str]]:
@@ -224,9 +266,7 @@ def create_app(
             key: build_provider_client(access_url)
             for key, access_url in provider_access_urls.items()
         }
-        app.state.app_state = _AppState(
-            provider_clients=provider_clients, request_counter=RequestCounter()
-        )
+        app.state.app_state = _AppState(provider_clients=provider_clients)
         try:
             yield
         finally:
@@ -234,7 +274,7 @@ def create_app(
                 await provider_client.aclose()
 
     app = FastAPI(lifespan=lifespan)
-    require_client_auth = build_client_auth_dependency(agg_creds_path)
+    require_client_auth = _build_client_auth_dependency(agg_creds_path)
 
     @app.post(f"{CLAIM_PATH_PREFIX}{{claim_secret}}")
     async def claim(claim_secret: str) -> PlainTextResponse:  # pyright: ignore [reportUnusedFunction]
@@ -258,9 +298,7 @@ def create_app(
         state = _get_app_state(request)
         requests = _route_requests(config, _forwarded_accounts_params(request))
 
-        responses = await fetch_all(
-            state.provider_clients, requests, "/accounts", state.request_counter
-        )
+        responses = await fetch_all(state.provider_clients, requests, "/accounts")
         merged = merge(
             [
                 (provider.prefix, response)

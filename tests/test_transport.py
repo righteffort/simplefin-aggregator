@@ -9,7 +9,6 @@ import httpx2
 
 from sf_agg.config import Provider
 from sf_agg.provider_response import ProviderFailure
-from sf_agg.request_counter import RequestCounter
 from sf_agg.transport import fetch, fetch_all
 
 
@@ -64,9 +63,7 @@ async def test_fetch_all_calls_every_provider() -> None:
         provider_b.key: _client_for("bank-b", _slow_ok_handler(calls, tracker)),
     }
 
-    responses = await fetch_all(
-        clients, [(provider_a, []), (provider_b, [])], "/accounts", RequestCounter()
-    )
+    responses = await fetch_all(clients, [(provider_a, []), (provider_b, [])], "/accounts")
 
     assert [r.provider_name for r in responses] == ["bank-a", "bank-b"]
     assert all(r.ok for r in responses)
@@ -82,9 +79,7 @@ async def test_fetch_all_requests_overlap_in_time() -> None:
         provider_b.key: _client_for("bank-b", _slow_ok_handler(calls, tracker)),
     }
 
-    _ = await fetch_all(
-        clients, [(provider_a, []), (provider_b, [])], "/accounts", RequestCounter()
-    )
+    _ = await fetch_all(clients, [(provider_a, []), (provider_b, [])], "/accounts")
 
     assert tracker.max_seen == 2, "both provider requests should have been in flight at once"  # noqa: PLR2004
 
@@ -104,9 +99,7 @@ async def test_fetch_all_one_provider_failing_still_yields_response_for_both() -
         provider_b.key: _client_for("bank-b", failing_handler),
     }
 
-    responses = await fetch_all(
-        clients, [(provider_a, []), (provider_b, [])], "/accounts", RequestCounter()
-    )
+    responses = await fetch_all(clients, [(provider_a, []), (provider_b, [])], "/accounts")
 
     assert len(responses) == 2  # noqa: PLR2004
     assert responses[0].provider_name == "bank-a"
@@ -139,7 +132,6 @@ async def test_each_provider_receives_only_the_parameters_paired_with_it() -> No
             (provider_b, [("start-date", "1"), ("account", "b-1"), ("account", "b-2")]),
         ],
         "/accounts",
-        RequestCounter(),
     )
 
     assert received["bank-a"] == [("start-date", "1"), ("account", "a-1")]
@@ -155,7 +147,7 @@ async def test_fetch_reports_a_redirect_as_a_failure() -> None:
 
     client = _client_for("bank-a", redirecting_handler)
 
-    response = await fetch(client, "bank-a", "/accounts", [], RequestCounter())
+    response = await fetch(client, "bank-a", "/accounts", [])
 
     assert response.ok is False
     assert calls == ["https://bank-a.example.com/simplefin/accounts"], "no retry at the target"

@@ -92,8 +92,13 @@ appears to touch.** Each is a claim about the whole codebase — "the only place
 a provider's text is passed on is X" — and a new log line in `merge.py` can
 falsify one without going anywhere near the sentence that makes it.
 
-## Comments and commit messages
+## Documentation, comments and commit messages
 
+- `docs/ARCHITECTURE.md` is a map of the system, not a second copy of the code.
+  It says how the pieces fit, which invariants hold across them, and which are
+  load-bearing enough that changing one breaks something elsewhere.
+  - It should point to, not repeat, code, and only when it is relevant.
+  - It should not the details of module designs; those belong in modules docstrings or doc comments.
 - **Comments say why, not what**, and only where the reason is non-obvious —
   the default for any given line is no comment at all. A comment restating the
   code is noise. Heavy comment density reads as intricacies standing in for

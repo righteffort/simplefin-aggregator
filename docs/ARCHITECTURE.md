@@ -5,34 +5,32 @@
 This is a developer/agent-facing map of `simplefin-aggregator`. `README.md`
 covers how to use it; `AGENTS.md` covers how to work on it.
 
-It is a map, not a second copy of the code: it says how the pieces fit, which
-invariants hold across them, and which are load-bearing enough that changing
-one breaks something elsewhere. Where the reason for a single module's design
-is already in that module's docstring, this file points at it rather than
-restating it.
+## Summary
 
-## Purpose
+SimpleFIN Aggregator (`sf-agg`) provides a [SimpleFIN protocol (version
+1)](https://www.simplefin.org/protocol-v1.html) server that aggregates data from one
+or more other SimpleFIN protocol v1 servers.
 
-A server that speaks the SimpleFIN protocol to a client app
-(Actual Budget is the motivating example, but it's generic) and proxies one or
-more SimpleFIN providers behind it, v1 in both directions. The accounts of
-every configured provider are presented as one set, each account id behind its
-provider's prefix — see "Account id namespacing" — and a provider's failure
-costs that provider's accounts rather than the whole response — see
-"`GET /simplefin/accounts`".
+It combines the accounts of every configured provider, with a prefix for each
+prepended to each account id — see [Account id
+namespacing](#account-id-namespacing). If not all providers respond, the results
+from the remaining providers are returned — see [`GET
+/simplefin/accounts`](#get-simplefinaccounts).
 
-The other half of the job is credential handling. A provider access URL embeds
-Basic Auth credentials for the user's bank data, and it is obtained by pasting
-in a base64 URL from a web page. Guarding that path — see "Provider URL
-validation" and "Cross-cutting: secrets and logging" — shapes more of this
-codebase than the proxying does.
+It manages both its own credentials ('aggregator credentials'), so that clients
+can securely connect to it; and provider credentials, so that it can securely
+connect to providers. Provider credentials are especially sensitive, as they are
+effectively long-lived bearer tokens that grant read-only access to the user's
+financial data.
+
+It takes care to validate that the URLs used to connect to providers are
+legitimate — see [Provider URL validation](#provider-url-validation), and not to
+reveal credentials — see [Cross-cutting: secrets and
+logging](#cross-cutting-secrets-and-logging).
 
 ## Terminology
 
-TODO: incomplete; see `docs/TODO.md`.
-
-These terms are for precision, not for every sentence: once the context has
-said "client app", "app" alone reads fine.
+<!-- TODO: incomplete; see `docs/TODO.md`. -->
 
 ### Fundamentals
 - **SimpleFIN protocol** — a client-server protocol for sharing finance data.
@@ -79,13 +77,13 @@ disambiguated, it is prefixed with the issuer: **provider** or **aggregator**
 - **unused** — less-formal synonym for `unexchanged`
 - Never: a setup token is *claimed*, *spent*, or *unredeemed*.
 
-## Module map
+## Map of key modules
 
 `src/sf_agg/`:
 
 | File | Responsibility |
 |---|---|
-| `cli.py` | The Typer command-line entry points. Wires everything else together. `main()` is the `console_scripts` target. |
+| `cli.py` | The command-line entry points | 
 | `config.py` | The config file's two shapes (private `_ConfigModel`/`_ProviderFileEntry`, public `Config`/`Provider`), `CustomProvider`, `load_config()`, and where the config directory lives. All config validation lives here, the prefix rules included. Holds no credentials. |
 | `state_file.py` | Everything this application does with a file it owns: the permission warning, the redacted validation-error rendering, the atomic 0600 write, the sidecar `flock`, and the locked read-modify-write. Imports nothing else in the package — `config.py` takes its warning and its error rendering from here, not the other way around. |
 | `agg_creds.py` | The aggregator creds store: the two-state record, the digest helpers, and the constructors that mint a claim secret and exchange a record for credentials. |
@@ -93,7 +91,6 @@ disambiguated, it is prefixed with the issuer: **provider** or **aggregator**
 | `url_validation.py` | `NormalizedUrl`, `parse_url`/`parse_root`, `validate_claim_url`/`validate_access_url`, `UrlValidationError`. The phishing defense; read its module docstring before touching anything here. |
 | `provider_access_urls.py` | The `provider_creds.json` store: provider key → access URL. Schema and semantics only; the file handling is `state_file.py`'s. |
 | `app.py` | `create_app(config, access_urls, agg_creds_path) -> FastAPI`: the ASGI app factory, lifespan, and all three HTTP routes. |
-| `auth.py` | `build_client_auth_dependency(store_path)`, the factory for the FastAPI dependency guarding `/simplefin/accounts`. |
 | `access_url.py` | Builds the access URL this aggregator hands back from `POST /simplefin/claim/{claim_secret}` — the one it *issues*, not the ones it holds (that is `provider_access_urls.py`). |
 | `setup_token.py` | Builds the base64 setup token `client add` prints (the inverse direction of `access_url.py`: this aggregator's *own* claim URL, encoded the way a real provider's would be). |
 | `provider_clients.py` | `build_provider_client(access_url) -> httpx2.AsyncClient`: one long-lived client per provider, built once at startup. |
@@ -101,10 +98,7 @@ disambiguated, it is prefixed with the issuer: **provider** or **aggregator**
 | `provider_response.py` | `ProviderSuccess` / `ProviderFailure` / `ProviderResponse` — the uniform result type `fetch` always returns. |
 | `merge.py` | `merge(results) -> MergedResponse`: several providers' responses concatenated into one v1 body, each account id behind its provider's prefix. |
 | `provider_resolution.py` | `resolve_providers_for_account`: which providers an exposed account id may belong to, and what that id is to each of them. |
-| `request_counter.py` | `RequestCounter`: per-provider daily request counts, logged for observability only, never used as a control. |
 | `access_log.py` | Generic uvicorn-access-log redaction utility. Knows nothing about SimpleFIN or setup tokens — `app.py`/`cli.py` supply what to redact. |
-
-`tests/support.py` holds shared test helpers used across multiple test files.
 
 ## On-disk state
 
@@ -332,22 +326,12 @@ the ordering rule, what makes a response usable, and what a collision costs.
 
 ### `_AppState` (`app.py`, private)
 
-```python
-_AppState(provider_clients: dict[str, httpx2.AsyncClient], request_counter: RequestCounter)
-```
-
 The **one** thing hung off FastAPI/Starlette's `app.state` (which is an
 untyped attribute bag — `Any` all the way down). Built once in the lifespan
 context manager, read via `_get_app_state(request)` which does the one
 `cast(_AppState, request.app.state.app_state)` for the whole app. Adding a
 new piece of request-scoped shared state means adding a field here, not a new
 `app.state.whatever`.
-
-It is the only one, and the way to keep it that way is that a dependency
-needing something from `create_app` takes it as a factory argument:
-`build_client_auth_dependency(store_path)` closes over the path, so `auth.py`
-reads no attribute and casts nothing, even though it lives in another module
-and has no closure over `create_app`'s locals.
 
 ## Account id namespacing
 
@@ -424,7 +408,6 @@ codebase:
   pre-resolution/pinning or other SSRF defenses (single principal, no confused
   deputy — and TLS binds identity to the hostname, so the resolved address is
   irrelevant); credential encryption at rest beyond file permissions.
-  `.coderabbit.yaml` carries the same list, so a reviewer does not propose them.
 - **Matching is one prefix comparison** of `origin_and_path`, which begins with
   the scheme and host and so covers scheme, host, port and path prefix at once.
   **Do not add separate scheme/host/port checks anywhere** — they would be
@@ -521,7 +504,7 @@ The orderings:
 
 A `claim` invocation for a provider the config's `[[providers]]` does not name still
 succeeds and is stored — it just warns, since `serve` would otherwise report it
-as unclaimed later.  TODO: "unclaimed" is unlikely to be the actual message here.
+as unclaimed later.  <!-- TODO: "unclaimed" is unlikely to be the actual message here. -->
 
 `_build_claim_client` and `_build_probe_client` are seams purely for test
 injection (see Testing below) — not a general dependency-injection pattern
@@ -580,13 +563,14 @@ both fail the same lookup and there is no code that could tell them apart.
 
 ### `GET /simplefin/accounts`
 
+<!-- TODO: too much repetition of unessential info about code -->
+
 ```text
 app.accounts(request)
-  -> require_client_auth (dependency built over the store path by
-     build_client_auth_dependency; reads aggregator_creds.json in a threadpool on
-     every request, 403 on missing, unknown or unreadable; 403 also on an
+  -> require_client_auth (reads aggregator_creds.json in a threadpool on every
+     request, 403 on missing, unknown or unreadable; 403 also on an
      unexchanged record, which recognizes a claim secret and not credentials)
-  -> _get_app_state(request) -> provider_clients, request_counter
+  -> _get_app_state(request) -> provider_clients
   -> _forwarded_accounts_params(request)
        - keep only v1's five query keys (ACCOUNTS_FORWARDED_PARAMS); a
          "version" a client app sends is ignored, as v1 is the only supported
@@ -597,7 +581,7 @@ app.accounts(request)
          and provider-local id; one request per owning provider, in configured
          order, carrying its own ids and the shared params
        - an id no prefix claims: logged, routed nowhere, absent from the response
-  -> fetch_all(clients, requests, "/accounts", counter)
+  -> fetch_all(clients, requests, "/accounts")
        -> asyncio.gather over fetch() per request, order preserved
        -> fetch() never raises: httpx2.HTTPError -> ProviderFailure
        -> 3xx                                    -> ProviderFailure
@@ -623,11 +607,9 @@ answers 200 with an empty account set.
 
 `GET /simplefin/info` shares none of this. It answers `{"versions": ["1.0"]}`
 locally, contacting no provider: the version is a fact about the protocol this
-server speaks to its client app, and the route is unauthenticated, so proxying
-it would turn one anonymous request into one request per provider against the
-budgets `RequestCounter` exists to watch.
+server speaks to its client app, and requires no authentication.
 
-TODO: 'both clients'
+<!-- TODO: 'both clients' -->
 
 **Redirects are never followed** — not here, and not on the claim POST; the
 `follow_redirects=False` is set explicitly in both clients even though it is
@@ -641,7 +623,7 @@ contributing nothing, the same as any other way of failing.
 
 ## Concurrency model
 
-TODO: 'sync clients'
+<!-- TODO: 'sync clients' -->
 
 - Everything provider-facing is `httpx2.AsyncClient` / `async def`. The only
   sync clients are `claim`'s two, for the POST and the probe — a one-shot
@@ -656,14 +638,10 @@ TODO: 'sync clients'
 - Output order from `fetch_all` matches the input `requests` order (gather
   preserves order; this is relied on, not incidental — it is what pairs each
   response with the prefix `merge` puts on its accounts).
-- `RequestCounter` is passed explicitly into `fetch`/`fetch_all` rather than
-  reached for as global/module state — it's shared across concurrent
-  `fetch()` calls, but simple dict increments with no `await` in between are
-  safe under asyncio's single-threaded cooperative model.
 
 ### Writing a state file
 
-TODO: "the other store" ?
+<!-- TODO: "the other store" ? -->
 
 A store is written whole, so changing one entry means reading the rest first,
 and two writers doing that at once each save a version missing what the other
@@ -834,8 +812,8 @@ sent.
   rather than a built-in root.
 - Tests are labeled to say whether they pin a *requirement* or *current
   behavior*; `AGENTS.md` has the rule.
-- Reaching into `app.py`'s private `_AppState` from test code is accepted
-  (`tests/support.py` imports it with a `# pyright: ignore[reportPrivateUsage]`)
+- Reaching into `app.py`'s private names from test code is accepted
+  (`tests/support.py` imports `_AppState` with a `# pyright: ignore[reportPrivateUsage]`)
   — it's the established pattern for tests that need to touch internal wiring.
 - `asyncio_mode = "auto"` in `pyproject.toml` — async test functions don't
   need an explicit `@pytest.mark.asyncio`.

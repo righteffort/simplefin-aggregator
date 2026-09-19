@@ -17,21 +17,15 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from .config import Provider
-    from .request_counter import RequestCounter
 
 logger = logging.getLogger(__name__)
 
 
 async def fetch(
-    client: httpx2.AsyncClient,
-    provider_name: str,
-    path: str,
-    params: Sequence[tuple[str, str]],
-    counter: RequestCounter,
+    client: httpx2.AsyncClient, provider_name: str, path: str, params: Sequence[tuple[str, str]]
 ) -> ProviderResponse:
     """Issue one request to one provider. Never raises; failure becomes ProviderFailure."""
-    count_today = counter.record(provider_name)
-    logger.info("provider request: %s (request #%d today)", provider_name, count_today)
+    logger.info("provider request: %s", provider_name)
     try:
         response = await client.get(path, params=httpx2.QueryParams(tuple(params)))
     except httpx2.HTTPError as exc:
@@ -51,13 +45,12 @@ async def fetch_all(
     clients: Mapping[str, httpx2.AsyncClient],
     requests: Sequence[tuple[Provider, Sequence[tuple[str, str]]]],
     path: str,
-    counter: RequestCounter,
 ) -> list[ProviderResponse]:
     """Issue every given request concurrently. Output order matches `requests`."""
     return list(
         await asyncio.gather(
             *(
-                fetch(clients[provider.key], provider.key, path, params, counter)
+                fetch(clients[provider.key], provider.key, path, params)
                 for provider, params in requests
             )
         )
