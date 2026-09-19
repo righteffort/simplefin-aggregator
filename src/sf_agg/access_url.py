@@ -9,11 +9,11 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 
 if TYPE_CHECKING:
-    from .app_tokens import ClientCredentials
+    from .agg_creds import AccessUrlAuth
 
 
-def build_access_url(base_url: str, credentials: ClientCredentials) -> str:
-    """Compose an access URL from the base URL and the credentials one claim issued.
+def build_access_url(base_url: str, credentials: AccessUrlAuth) -> str:
+    """Compose an access URL from the base URL and basic auth credentials.
 
     This is the only time either credential is rendered anywhere. The store
     keeps digests, so nothing can rebuild this URL afterwards -- the client app

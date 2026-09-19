@@ -13,7 +13,7 @@ restating it.
 
 ## Purpose
 
-A server that speaks the SimpleFIN Bridge protocol to a client app
+A server that speaks the SimpleFIN protocol to a client app
 (Actual Budget is the motivating example, but it's generic) and proxies one or
 more SimpleFIN providers behind it, v1 in both directions. The accounts of
 every configured provider are presented as one set, each account id behind its
@@ -27,30 +27,82 @@ in a base64 URL from a web page. Guarding that path — see "Provider URL
 validation" and "Cross-cutting: secrets and logging" — shapes more of this
 codebase than the proxying does.
 
+## Terminology
+
+TODO: incomplete; see `docs/TODO.md`.
+
+These terms are for precision, not for every sentence: once the context has
+said "client app", "app" alone reads fine.
+
+### Fundamentals
+- **SimpleFIN protocol** — a client-server protocol for sharing finance data.
+
+SimpleFIN Aggregator (`sf-agg`) is both a SimpleFIN protocol client and server.
+
+### Parties
+
+- **provider** — a SimpleFIN server aggregated by `sf-agg`.
+- **client app** — a client of `sf-agg`. Sometimes abbreviated as `client`.
+- **sf-agg server** — the `sf-agg serve` process. Can be abbreviated to `server`
+  if the meaning is clear from context.
+- **`app`, in code** — an application object: the FastAPI instance (`app.py`)
+  or the Typer root (`cli.app`). Never a client app.
+- **key** — what `config.toml` and `provider_creds.json` know a provider by
+  (**provider key**), or what `aggregator_creds.json` and the `client`
+  commands know a client app by (**client key**). Both match `KEY_PATTERN`.
+
+### Credentials
+
+- **setup token** — the base64 string a user copies from a SimpleFIN server
+  and pastes into a client. Can be abbreviated as `token`. There is no other kind of token.
+- **claim URL** — what a setup token decodes to.
+- **claim secret**, in code — the random last path segment of a claim URL,
+  which the issuing server recognizes it by. Not user-facing vocabulary.
+- **access URL** — what a claim URL responds with: a URL embedding the Basic
+  Auth credentials a client presents on every subsequent request to the server that issued it.
+
+Each SimpleFIN server issues its own credentials. When a term needs to be
+disambiguated, it is prefixed with the issuer: **provider** or **aggregator**
+(**`agg`** in identifiers). For example, "provider setup token", "aggregator access URL".
+
+### Verbs
+
+- **issue** — verb. A SimpleFIN server **issues** a setup token, and **issues** an access URL in
+  exchange for one.
+- **exchange** — verb. A setup token is **exchanged** for an access URL.
+- **claim** — verb. "A client **claims** an access URL" is an acceptable
+  alternative to the above if it reads more fluently.
+- **exchanged** — adjective. A setup token that has already been exchanged for an access URL.
+- **redeemed** — adjective. Acceptable synonym for `exchanged` if it would read more fluently.
+- **use** / **used** — verb, adjective. Synonym for `exchange` / `exchanged`, only in informal user-facing text, e.g. "a setup token can be used once."
+- **unexchanged** — adjective, a setup token that has not yet been exchanged
+- **unused** — less-formal synonym for `unexchanged`
+- Never: a setup token is *claimed*, *spent*, or *unredeemed*.
+
 ## Module map
 
-`src/simplefin_aggregator/`:
+`src/sf_agg/`:
 
 | File | Responsibility |
 |---|---|
 | `cli.py` | The Typer command-line entry points. Wires everything else together. `main()` is the `console_scripts` target. |
 | `config.py` | The config file's two shapes (private `_ConfigModel`/`_ProviderFileEntry`, public `Config`/`Provider`), `CustomProvider`, `load_config()`, and where the config directory lives. All config validation lives here, the prefix rules included. Holds no credentials. |
 | `state_file.py` | Everything this application does with a file it owns: the permission warning, the redacted validation-error rendering, the atomic 0600 write, the sidecar `flock`, and the locked read-modify-write. Imports nothing else in the package — `config.py` takes its warning and its error rendering from here, not the other way around. |
-| `app_tokens.py` | The app token store: the two-state record, the digest helpers, and the constructors that mint a setup token and spend one for credentials. |
-| `provider_registry.py` | `ProviderEntry` and `KNOWN_PROVIDERS`: the fixed set of providers a setup token may be claimed from, plus `merged_providers`/`find_provider`. Must not import `config.py` — config imports it. |
+| `agg_creds.py` | The aggregator creds store: the two-state record, the digest helpers, and the constructors that mint a claim secret and exchange a record for credentials. |
+| `provider_registry.py` | `ProviderEntry` and `KNOWN_PROVIDERS`: the fixed set of providers a setup token may reference, plus `merged_providers`/`find_provider`. Must not import `config.py` — config imports it. |
 | `url_validation.py` | `NormalizedUrl`, `parse_url`/`parse_root`, `validate_claim_url`/`validate_access_url`, `UrlValidationError`. The phishing defense; read its module docstring before touching anything here. |
 | `provider_access_urls.py` | The `provider_creds.json` store: provider key → access URL. Schema and semantics only; the file handling is `state_file.py`'s. |
-| `app.py` | `create_app(config, access_urls, app_tokens_path) -> FastAPI`: the ASGI app factory, lifespan, and all three HTTP routes. |
+| `app.py` | `create_app(config, access_urls, agg_creds_path) -> FastAPI`: the ASGI app factory, lifespan, and all three HTTP routes. |
 | `auth.py` | `build_client_auth_dependency(store_path)`, the factory for the FastAPI dependency guarding `/simplefin/accounts`. |
-| `access_url.py` | Builds the access URL this aggregator hands back from `POST /simplefin/claim/{token}` — the one it *issues*, not the ones it holds (that is `provider_access_urls.py`). |
-| `setup_token.py` | Builds the base64 setup token `app new` prints (the inverse direction of `access_url.py`: this aggregator's *own* claim URL, encoded the way a real provider's would be). |
+| `access_url.py` | Builds the access URL this aggregator hands back from `POST /simplefin/claim/{claim_secret}` — the one it *issues*, not the ones it holds (that is `provider_access_urls.py`). |
+| `setup_token.py` | Builds the base64 setup token `client add` prints (the inverse direction of `access_url.py`: this aggregator's *own* claim URL, encoded the way a real provider's would be). |
 | `provider_clients.py` | `build_provider_client(access_url) -> httpx2.AsyncClient`: one long-lived client per provider, built once at startup. |
 | `transport.py` | `fetch`/`fetch_all`: the concurrent, non-raising provider-request layer. |
 | `provider_response.py` | `ProviderSuccess` / `ProviderFailure` / `ProviderResponse` — the uniform result type `fetch` always returns. |
 | `merge.py` | `merge(results) -> MergedResponse`: several providers' responses concatenated into one v1 body, each account id behind its provider's prefix. |
 | `provider_resolution.py` | `resolve_providers_for_account`: which providers an exposed account id may belong to, and what that id is to each of them. |
 | `request_counter.py` | `RequestCounter`: per-provider daily request counts, logged for observability only, never used as a control. |
-| `access_log.py` | Generic uvicorn-access-log redaction utility. Knows nothing about SimpleFIN or claim tokens — `app.py`/`cli.py` supply what to redact. |
+| `access_log.py` | Generic uvicorn-access-log redaction utility. Knows nothing about SimpleFIN or setup tokens — `app.py`/`cli.py` supply what to redact. |
 
 `tests/support.py` holds shared test helpers used across multiple test files.
 
@@ -63,7 +115,7 @@ Three files, plus a lock sidecar per store, all in the directory
 |---|---|---|
 | `config.toml` | the user, by hand | the settings `_ConfigModel` in `config.py` declares |
 | `provider_creds.json` | `claim` | provider key → provider access URL |
-| `aggregator_creds.json` | `app new`/`revoke`/`regen`, and the claim route | app key → an unclaimed or claimed app token record, digests only |
+| `aggregator_creds.json` | `client add`/`revoke`/`reset`, and the claim route | client key → an unexchanged or exchanged aggregator creds record, digests only |
 
 **The three want different things, and the difference is load-bearing.**
 
@@ -100,10 +152,10 @@ It does not run on the `.lock` sidecars, which hold nothing.
 
 The provider store is keyed by provider key because that is the one identifier
 `config.toml` and the store share; neither file has to name the other — which
-is why two accounts at one provider is a non-goal. The app token store is keyed
-by the key its command was given, constrained to `[a-z0-9][a-z0-9-]*` at the
-command and again in the model, so what `app list` prints is what this
-application could have written.
+is why two accounts at one provider is a non-goal. The aggregator creds store
+is keyed by client key, constrained to `[a-z0-9][a-z0-9-]*` at the command and
+again in the model, so what `client list` prints is what this application could
+have written.
 
 ## Key data structures
 
@@ -126,9 +178,9 @@ gets that conversion free — `parse_root` reads `raw_host` off httpx2's parser,
 which has already encoded it — while `base_url` goes through `urlsplit`, which
 normalizes nothing and hands back whatever it was given. So the requirement
 falls on the input, and it is checked at load time rather than where
-`build_setup_token` would hit it, because `app new` writes its record before it
-prints and a failure there would leave an app that could never be handed a
-token.
+`build_setup_token` would hit it, because `client add` writes its record before
+it prints and a failure there would leave a client that could never be handed a
+setup token.
 
 A `Provider` is a reference plus a namespace: no `name`, and no `access_url`
 (that lives in the store). `key` is the identifier everywhere — the store's
@@ -156,8 +208,8 @@ for the same reason: `provider_entries()` reads those, so a mutable one would
 let a checked invariant stop being true of the object it was checked on.
 
 **`aggregator_creds.json` is live state: read afresh on every request that
-authenticates, and written on every claim.** That is the whole of what makes
-`app revoke` take effect without a restart. Do not add a cache, an mtime check
+authenticates, and written on every setup token exchange.** That is the whole of what makes
+`client revoke` take effect without a restart. Do not add a cache, an mtime check
 or a reload signal to it.
 
 **`load_config(path) -> Config`** reads TOML, warns if the file is
@@ -178,46 +230,27 @@ merges the result into `KNOWN_PROVIDERS`
 through `merged_providers`, which rejects a duplicate key rather than letting
 a custom entry shadow or collide with a built-in one.
 
-### `UnclaimedAppToken` / `ClaimedAppToken` (`app_tokens.py`)
+### `AggCreds` (`agg_creds.py`)
 
-```text
-UnclaimedAppToken                     # a setup token issued and not yet spent
-  status: Literal["unclaimed"]
-  created_at: AwareDatetime
-  claim_token_sha256: _Sha256Hex
+`AggCreds` is what `aggregator_creds.json` keeps for one client, as digests
+only: `UnexchangedAggCreds` while the client's setup token awaits exchange,
+`ExchangedAggCreds` once it has been exchanged for an access URL.
 
-ClaimedAppToken                       # what a claim exchanged it for
-  status: Literal["claimed"]
-  created_at: AwareDatetime
-  claimed_at: AwareDatetime
-  username_sha256: _Sha256Hex
-  password_sha256: _Sha256Hex
-
-AppTokenRecord = Annotated[UnclaimedAppToken | ClaimedAppToken, Field(discriminator="status")]
-```
-
-An app token record is one client app's row in `aggregator_creds.json`, in one
-of two states: `UnclaimedAppToken`, holding the digest of a setup token that
-has not been spent, or `ClaimedAppToken`, holding the digests of the Basic
-Auth credentials a claim exchanged it for. Neither variant literally holds a
-token — the claimed one holds no token at all — but "app token" names the
-record, not its payload, so the variant names track the `status` values
-they discriminate on rather than what each one contains.
-
-Two states and no third, narrowed by `isinstance` the way `ProviderSuccess |
-ProviderFailure` is. **A claim replaces the unclaimed record rather than
-marking it spent**, which is what makes a replayed setup token fail the same
-lookup an unissued one fails — the protocol's indistinguishability requirement,
-obtained by construction instead of defended by a branch. It is also why
-`app regen` cannot leave an app holding live credentials and an unspent token
-at once.
+Two states, narrowed by `isinstance` the way `ProviderSuccess | ProviderFailure`
+is. **Exchanging a setup token replaces the record rather than flagging it**:
+the exchanged record keeps no claim secret digest, which is what makes a
+replayed setup token fail the same lookup an unissued one fails — the
+protocol's indistinguishability requirement, obtained by construction instead
+of defended by a branch. It is also why `client reset` cannot leave a client
+holding live credentials and an unexchanged setup token at once.
 
 Nothing in these models is a `SecretStr`, because nothing in them is a secret.
-`_Sha256Hex` and `AwareDatetime` exist for the same reason: a value this
-application could not have written is rejected when the file is read, rather
-than at the comparison or the subtraction it would later break.
+They are strict, and `exchanged` has to be a JSON boolean, for the reason
+`_Sha256Hex` is constrained: a value this application could not have written is
+rejected when the file is read, rather than at the comparison or the arithmetic
+it would later break.
 
-`new_app_token` and `claim_app_token` are the only ways to build a record.
+`new_agg_creds` and `exchange_agg_creds` are the only ways to build a record.
 They mint the secret and return it once alongside the record that will
 recognize it, which keeps the timestamp and the digesting out of `cli.py` and
 the claim route — the two places where assembling a record by hand would put
@@ -413,10 +446,10 @@ codebase:
 cli.serve
   -> note naming the config directory -> stderr
   -> _load_config_or_exit()                   # load_config, or print+exit 1
-  -> _check_app_store_or_exit()               # store parses, directory writable
+  -> _check_agg_creds_or_exit()               # store parses, directory writable
                                               #   empty store -> warn, not fail
   -> load_access_urls(provider_creds_path())
-  -> create_app(config, access_urls, app_tokens_path())
+  -> create_app(config, access_urls, agg_creds_path())
                                               # validates every stored access URL, see below
   -> install_access_log_redaction(...)        # generic filter, told about CLAIM_PATH_PREFIX
   -> uvicorn.run(app, host, port)
@@ -427,9 +460,9 @@ cli.serve
 
 `create_app` raises rather than starting a server that cannot work: for each
 configured `provider.key` it resolves the entry, looks the key up in the store
-(missing → "claim one first"), and re-runs `validate_access_url` against that
+(missing → "run claim first"), and re-runs `validate_access_url` against that
 provider's *current* root. That is a single-entry comparison, not a scan — the
-URL was claimed from one specific provider, so that is the root it must still
+URL was issued by specific provider, so that is the root it must still
 match. Every provider's check runs regardless of the others' outcome, and
 `create_app` raises every failure together as one `ProviderAccessUrlError`;
 `cli.py` prints each on its own line, the same display-safe text
@@ -438,21 +471,13 @@ match. Every provider's check runs regardless of the others' outcome, and
 before uvicorn starts, so a config change that invalidates a stored URL fails
 at startup, not on the first request.
 
-The app token store is checked at startup but **not read into the app**: the
-server reads it on every authenticated request and writes it on every claim, so
-what `serve` establishes is that the file parses and its directory can be
-written — a store it cannot parse would answer 403 to everything and a
-directory it cannot write would lose every claim. An empty store is a warning
-rather than a failure: it is the legitimate state between installing the server
-and issuing the first app its token.
-
-### CLI `claim [provider]` (claiming from a *real* provider)
+### CLI `claim [provider]` (exchanging a provider setup token)
 
 ```text
 cli.claim
   -> refuse extra arguments                  # never quoting them
   -> _load_config_or_exit()                  # claim needs a fully valid config, like serve
-  -> load_access_urls(...) + check_can_save(...)   # BEFORE the token is spent
+  -> load_access_urls(...) + check_can_save(...)   # BEFORE the token is exchanged
   -> the provider, from config.provider_entries()
        provider given   -> find_provider    # named, so exact; never fuzzy; never echoed
        otherwise        -> numbered menu; no default, no free-text host
@@ -494,26 +519,26 @@ The orderings:
    its reply.
 4. **The response is stripped, then validated, then stored** — never printed.
 
-A claim for a provider the config's `[[providers]]` does not name still
+A `claim` invocation for a provider the config's `[[providers]]` does not name still
 succeeds and is stored — it just warns, since `serve` would otherwise report it
-as unclaimed later.
+as unclaimed later.  TODO: "unclaimed" is unlikely to be the actual message here.
 
 `_build_claim_client` and `_build_probe_client` are seams purely for test
 injection (see Testing below) — not a general dependency-injection pattern
 used elsewhere in this codebase.
 
-### CLI `app new` / `regen` / `revoke` (obtaining/revoking *this aggregator's* tokens)
+### CLI `client add` / `reset` / `revoke` (issuing/revoking aggregator setup tokens)
 
 ```text
-cli.app_new(key)
+cli.client_add(key)
   -> _load_config_or_exit()                     # for base_url
   -> _check_key(key)                            # [a-z0-9][a-z0-9-]*, naming a rejected key
   -> _writable_store_or_exit()                  # directory writable, and warn if shared
-  -> update_app_tokens(store):                  # one locked read-modify-write
-       key already present -> exit 1, naming `app regen`, store untouched
-       else -> new_app_token() -> (secret, UnclaimedAppToken)
+  -> update_agg_creds(store):                   # one locked read-modify-write
+       key already present -> exit 1, naming `client reset`, store untouched
+       else -> new_agg_creds() -> (claim_secret, UnexchangedAggCreds)
   -> note naming the store path -> stderr
-  -> build_setup_token(base_url, secret) -> stdout, alone
+  -> build_setup_token(base_url, claim_secret) -> stdout, alone
   -> "shown once" note -> stderr
 ```
 
@@ -522,35 +547,36 @@ lock, or it answers from a version another writer is already replacing. The
 token is printed *after* the store is written, because a token this aggregator
 has no record of looks to the user like a working setup that never syncs.
 
-`app regen` is the same flow over an existing record. `app revoke` deletes the
-record outright. Neither leaves an app holding a live credential and an
-unspent token at once, which is what would make "revoked" mean two things.
+`client reset` is the same flow over an existing record, keeping its
+`created_at`. `client revoke` deletes the record outright. Neither leaves a
+client holding a live credential and an unexchanged setup token at once, which
+is what would make "revoked" mean two things.
 
-### `POST /simplefin/claim/{token}`
+### `POST /simplefin/claim/{claim_secret}`
 
 ```text
-app.claim(token)
-  -> run_in_threadpool(_spend_setup_token, store_path, token)   # no file I/O on the event loop
-       update_app_tokens(store):                                 # one locked read-modify-write
-         find the UnclaimedAppToken whose digest matches (compare_digest)
+app.claim(claim_secret)
+  -> run_in_threadpool(_exchange_setup_token, store_path, claim_secret)   # no file I/O on the event loop
+       update_agg_creds(store):                                  # one locked read-modify-write
+         find the UnexchangedAggCreds whose digest matches (compare_digest)
          none -> raise _UnknownSetupTokenError, out of the update, nothing written
-         else -> claim_app_token(record) -> (credentials, ClaimedAppToken); replaces the record
-  -> _UnknownSetupTokenError -> 403 "unknown claim token"
+         else -> exchange_agg_creds(record) -> (credentials, ExchangedAggCreds); replaces the record
+  -> _UnknownSetupTokenError -> 403 "unknown token"
   -> StateFileError          -> 500, and no access URL
   -> else: build_access_url(base_url, credentials) -> 200 text/plain, no trailing newline
 ```
 
 **Persist, then respond.** Crashing after the write costs a setup token the
-operator replaces with `app regen`; crashing after the response leaves the
+operator replaces with `client reset`; crashing after the response leaves the
 client app holding credentials this server does not recognize. The
 write-then-rename and its `fsync` are what make "persisted" mean survived a
 power cut, not merely reached the page cache — which is why the write stays in
 the request path.
 
 **A replayed token and one that was never issued are answered identically, by
-construction rather than by a branch.** The claim replaces the record it spent,
-so there is nothing left that answers to a spent token; both fail the same
-lookup and there is no code that could tell them apart.
+construction rather than by a branch.** Exchanging the setup token replaces the
+record it matched, so there is nothing left that answers to a redeemed token;
+both fail the same lookup and there is no code that could tell them apart.
 
 ### `GET /simplefin/accounts`
 
@@ -558,8 +584,8 @@ lookup and there is no code that could tell them apart.
 app.accounts(request)
   -> require_client_auth (dependency built over the store path by
      build_client_auth_dependency; reads aggregator_creds.json in a threadpool on
-     every request, 403 on missing, unknown or unreadable; 403 also on a
-     record that has not claimed, which holds a token and not credentials)
+     every request, 403 on missing, unknown or unreadable; 403 also on an
+     unexchanged record, which recognizes a claim secret and not credentials)
   -> _get_app_state(request) -> provider_clients, request_counter
   -> _forwarded_accounts_params(request)
        - keep only v1's five query keys (ACCOUNTS_FORWARDED_PARAMS); a
@@ -579,7 +605,7 @@ app.accounts(request)
   -> Response(body, 200, "application/json")
 ```
 
-**No provider hears another's account ids**, except among providers sharing
+**No provider receives another's account ids**, except among providers sharing
 the blank prefix, per "Account id namespacing". An `account` filter names ids
 in one provider's namespace, so each queried provider is given only the ids
 that resolved to it, alongside the parameters the request shares
@@ -588,7 +614,7 @@ iterating the configured providers rather than the requested ids, so two client
 apps asking for the same accounts in different orders are answered in the same
 order.
 
-**An id no prefix claims is the operator's news, not the client app's.** It is
+**An id no prefix claims is reported to the operator, not the client app.** It is
 logged, naming the id, and nothing about it reaches the response: repeating it
 there would put a value from outside into a body another program displays, and
 an entry that withholds it is a bare count naming nothing a client app could
@@ -601,6 +627,8 @@ server speaks to its client app, and the route is unauthenticated, so proxying
 it would turn one anonymous request into one request per provider against the
 budgets `RequestCounter` exists to watch.
 
+TODO: 'both clients'
+
 **Redirects are never followed** — not here, and not on the claim POST; the
 `follow_redirects=False` is set explicitly in both clients even though it is
 httpx2's default, so a refactor cannot silently flip it. The spec defines
@@ -612,6 +640,8 @@ through as a `ProviderSuccess`. A 3xx reaches the client app as that provider
 contributing nothing, the same as any other way of failing.
 
 ## Concurrency model
+
+TODO: 'sync clients'
 
 - Everything provider-facing is `httpx2.AsyncClient` / `async def`. The only
   sync clients are `claim`'s two, for the POST and the probe — a one-shot
@@ -633,11 +663,13 @@ contributing nothing, the same as any other way of failing.
 
 ### Writing a state file
 
+TODO: "the other store" ?
+
 A store is written whole, so changing one entry means reading the rest first,
 and two writers doing that at once each save a version missing what the other
-did. Four writers can: `app new`, `app revoke`, `app regen`, and the server's
-claim handler — and `claim` for the other store, where a lost update means an
-access URL whose one-time setup token has already been spent.
+did. Four writers can: `client add`, `client revoke`, `client reset`, and the
+server's claim handler — and `claim` for the other store, where a lost update
+means an access URL whose one-time setup token has already been exchanged.
 
 - **Writers take an exclusive `fcntl.flock`**, held across the whole
   read-modify-write. `update_state_file` is the only way to write either store,
@@ -667,7 +699,7 @@ writers; it is not a security boundary, and no `flock`-based one could be.
 
 **Two postures, and the first is much the safer.** A defense that *removes* the
 secret leaves nothing to leak and no rule for anyone to follow: the digest-only
-app token store and `SecretStr` are of that kind. A defense that keeps the
+aggregator creds store and `SecretStr` are of that kind. A defense that keeps the
 secret and handles it carefully — the right flags on an open, an error message
 built to exclude its input, a credential carried between two representations —
 depends on every future caller getting it right. Reach for the first when the
@@ -677,14 +709,14 @@ remembered.
 Five distinct places actively defend against leaking secrets; know all five
 before touching anything credential-adjacent:
 
-1. **`SecretStr`** on every stored access URL and on the credentials one claim
-   issues — redacts in `repr()`/`str()` automatically. The access URL store's
-   `field_serializer` reveals the real values for the JSON file and nowhere
-   else. Nothing in `config.toml` needs wrapping: it holds no credential.
+1. **`SecretStr`** on every stored access URL and on the credentials an
+   exchange issues (`AccessUrlAuth`) — redacts in `repr()`/`str()`
+   automatically. The access URL store's `field_serializer` reveals the real
+   values for the JSON file and nowhere else. Nothing in `config.toml` needs wrapping: it holds no credential.
 2. **Digests, not plaintext, in `aggregator_creds.json`.** Every secret that
-   file concerns is verified and never reproduced: the setup token against
-   what was pasted, the credentials against what the client app sends, and the
-   access URL is the client app's to keep. So `app list` cannot print a
+   file concerns is verified and never reproduced: the claim secret against
+   what a client presents, the credentials against what the client app sends,
+   and the access URL is the client app's to keep. So `client list` cannot print a
    credential and a stray `repr` cannot either — not because they are careful
    but because there is nothing there. Plain SHA-256 and no KDF: these are
    256-bit random values, not chosen passwords, and there is no dictionary to
@@ -712,17 +744,17 @@ before touching anything credential-adjacent:
 4. **uvicorn's own access logger** — bypasses application-level logging
    entirely. `access_log.py` (see its module docstring for why the filter
    matches on path prefix alone, with no notion of HTTP method) + the
-   `CLAIM_PATH_PREFIX`-based wiring in `cli.py`/`app.py` exists because uvicorn
-   was printing the raw setup token to stdout on every request against
-   `/simplefin/claim/{token}`, independent of anything the app itself logs. If
+   `CLAIM_PATH_PREFIX`-based wiring in `cli.py`/`app.py` exists because without it uvicorn
+   would print the raw claim secret to stdout on every request to
+   `/simplefin/claim/{claim_secret}`, independent of anything the app itself logs. If
    a future route ever embeds a credential in its path, it needs the same
    treatment; if it only sends credentials via headers (like Basic Auth
    today), it doesn't need any redaction since uvicorn's access log never
    includes headers.
 5. **The stored provider access URL**, the most sensitive value in the system.
    It reaches a message only as `NormalizedUrl.origin` or `origin_and_path`,
-   never as the raw string — and the same rule covers the setup token, whose
-   live, unclaimed value is the *path* of a claim URL. `cli.py` therefore prints
+   never as the raw string — and the same rule covers the setup token, which
+   encodes the *path* of a claim URL. `cli.py` therefore prints
    `UrlValidationError`'s own message and never re-renders the URL itself; that
    message is deliberately built for display, and its docstring says what it
    guarantees and where the guarantee stops. Provider response bodies are
@@ -754,7 +786,7 @@ asked for it, so the gap is left open.
 
 **Credentials reach a provider only through `auth=`, never through a URL.**
 Keep it that way: it is what leaves a request's own URL free of secrets, on
-every path but the claim POST, whose path is the live setup token.
+every path but the claim POST, whose path holds a live claim secret.
 
 It is not enough by itself, because a provider chooses what a failed exchange
 looks like and httpx2 quotes the wire in the exception it raises. A provider
@@ -773,34 +805,34 @@ sent.
   via `input=`; `_loopback_provider` serves one over a real socket. No
   `unittest.mock` beyond `monkeypatch`, and no `respx`, which does not support
   `httpx2`.
-- **No traffic leaves the machine in the automated suite.** Two fakes bind a
-  socket on `127.0.0.1`, where a test is about what reaches the wire and a
-  `MockTransport` cannot carry it — installing one replaces the client
-  `build_provider_client` returned, discarding the `base_url`/`auth=` split.
+- **No traffic leaves the machine.** Two fakes bind a socket on `127.0.0.1`,
+  where a test is about what reaches the wire and a `MockTransport` cannot
+  carry it — installing one replaces the client `build_provider_client`
+  returned, discarding the `base_url`/`auth=` split.
   `_loopback_provider` in `tests/test_accounts_endpoint.py` checks that
   credentials stay out of the outbound URL; `echoing_provider` in
   `tests/support.py` hands a request back as a malformed status line, for the
   leak corpus in "Cross-cutting: secrets and logging". Loopback is still the
   network stack; what the suite never does is address a host off this machine.
-  The one place that does — `scripts/manual_verify.py` against the live
-  SimpleFIN demo bridge — is separate, human-run, and documented as such in the
-  README.
+  Neither does `scripts/sf_agg_smoke.py`, the end-to-end check CI runs, which
+  drives a real `sf-agg` against `scripts/sf_server_fake.py`, a SimpleFIN
+  provider on loopback. Neither script ships in the package.
 - **`tests/support.py`** holds the shared fixtures: `make_config` builds a
   `Config` through `config_from_mapping`, the path `load_config` uses, from as
   many `ProviderSpec`s as a test names — each one a key, a root, an optional
   explicit prefix and the access URL the store will hold for it, spelled out
   rather than derived so that a test meaning them to disagree can say so;
   `make_access_urls`/`make_app` supply `create_app`'s other arguments, and
-  `make_app` takes a config *directory* so that a test can revoke an app
-  mid-run and have the next request see it; `make_claimed_app` and
-  `make_unclaimed_app` put a record in the store and hand back the one thing
-  the store does not keep — the credentials, or the setup token secret;
+  `make_app` takes a config *directory* so that a test can revoke a client
+  mid-run and have the next request see it; `add_client_and_exchange` and
+  `add_client` put a record in the store and hand back the one
+  thing the store does not keep — the credentials, or the claim secret;
   `install_provider_transport` swaps in a `MockTransport`-backed client, with
   an ordering constraint its docstring explains, and refuses a key the app
   built no client for. The fixture provider is a
   `custom_providers` entry, so most tests exercise the config-supplied path
   rather than a built-in root.
-- Tests are labelled to say whether they pin a *requirement* or *current
+- Tests are labeled to say whether they pin a *requirement* or *current
   behavior*; `AGENTS.md` has the rule.
 - Reaching into `app.py`'s private `_AppState` from test code is accepted
   (`tests/support.py` imports it with a `# pyright: ignore[reportPrivateUsage]`)
@@ -816,7 +848,7 @@ sent.
 ## Deliberate deviations from the SimpleFIN spec
 
 - **No `GET /create`.** The browser flow a real provider offers for minting a
-  setup token is not implemented; `app new` is this application's equivalent.
+  setup token is not implemented; `client add` is this application's equivalent.
   Precedent: https://beta-bridge.simplefin.org/simplefin/create is unimplemented.
 - **The access URL must share the claim URL's provider root.** The spec leaves
   that open; see "Provider URL validation".

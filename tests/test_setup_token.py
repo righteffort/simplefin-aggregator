@@ -2,7 +2,7 @@
 
 import base64
 
-from simplefin_aggregator.setup_token import build_setup_token
+from sf_agg.setup_token import build_setup_token
 
 
 CLAIM_SECRET = "my-secret-token"  # noqa: S105

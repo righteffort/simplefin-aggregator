@@ -14,14 +14,14 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr
 
-from simplefin_aggregator.config import DIR_ENV_VAR
-from simplefin_aggregator.provider_access_urls import (
+from sf_agg.config import DIR_ENV_VAR
+from sf_agg.provider_access_urls import (
     PROVIDER_CREDS_FILENAME,
     load_access_urls,
     provider_creds_path,
     save_access_url,
 )
-from simplefin_aggregator.state_file import StateFileError, check_can_save
+from sf_agg.state_file import StateFileError, check_can_save
 
 
 ACCESS_URL = "https://user:s3cret-provider-password@provider.invalid/simplefin"
@@ -51,7 +51,7 @@ def test_provider_creds_path_defaults_to_the_platform_config_dir(
     path = provider_creds_path()
 
     assert path.name == PROVIDER_CREDS_FILENAME
-    assert "simplefin-aggregator" in str(path)
+    assert "sf-agg" in str(path)
 
 
 def test_missing_file_loads_as_empty(tmp_path: Path) -> None:
@@ -190,7 +190,7 @@ def test_a_directory_fsync_failure_does_not_report_a_save_that_succeeded(
 ) -> None:
     """The rename has already happened, so failing here would claim a lost credential.
 
-    `claim` reports a failed save as a spent setup token, which is the most
+    `claim` reports a failed save as an exchanged setup token, which is the most
     expensive thing this application can wrongly tell a user. Reachable
     without an exotic filesystem: a config directory that is writable but not
     readable takes every write the store makes and still refuses this open.
@@ -385,6 +385,14 @@ def test_load_does_not_warn_on_owner_only_file_mode(
     assert capsys.readouterr().err == ""
 
 
+def test_a_top_level_key_this_store_does_not_write_is_rejected(tmp_path: Path) -> None:
+    path = provider_creds_path(tmp_path)
+    _ = path.write_text('{"access_urls": {}, "stray-key": {}}')
+
+    with pytest.raises(StateFileError, match="invalid contents"):
+        _ = load_access_urls(path)
+
+
 def test_malformed_json_is_a_clear_error(tmp_path: Path) -> None:
     path = provider_creds_path(tmp_path)
     _ = path.write_text("{not json")
@@ -473,9 +481,9 @@ def test_concurrent_saves_do_not_lose_each_other(
 
     A save rewrites the whole file, so a writer that reads it before another
     writer's save would store a version missing that provider -- losing an
-    access URL whose one-time setup token has already been spent. The sleep
-    widens the read-modify-write window that a writer would otherwise have to
-    be unlucky to land in.
+    access URL whose setup token has already been exchanged, so cannot be
+    exchanged again. The sleep widens the read-modify-write window that a writer
+    would otherwise have to be unlucky to land in.
     """
     path = provider_creds_path(tmp_path)
     real_read_text = Path.read_text

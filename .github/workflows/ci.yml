@@ -13,6 +13,7 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     strategy:
       matrix:
@@ -40,6 +41,9 @@ jobs:
 
       - name: Test
         run: uv run pytest
+
+      - name: Smoke test
+        run: uv run scripts/sf_agg_smoke.py
 
   check:
     name: Python CI passed

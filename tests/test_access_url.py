@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from pydantic import SecretStr
 
-from simplefin_aggregator.access_url import build_access_url
-from simplefin_aggregator.app_tokens import ClientCredentials
+from sf_agg.access_url import build_access_url
+from sf_agg.agg_creds import AccessUrlAuth
 
 
-def _credentials(username: str = "the-username", password: str = "s3cret") -> ClientCredentials:  # noqa: S107
-    return ClientCredentials(SecretStr(username), SecretStr(password))
+def _credentials(username: str = "the-username", password: str = "s3cret") -> AccessUrlAuth:  # noqa: S107
+    return AccessUrlAuth(SecretStr(username), SecretStr(password))
 
 
 def test_the_access_url_carries_the_credentials_and_the_simplefin_path() -> None:

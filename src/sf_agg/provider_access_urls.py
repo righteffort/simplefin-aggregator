@@ -15,9 +15,9 @@ collide on one key.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
-from pydantic import BaseModel, Field, SecretStr, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_serializer
 
 from .config import config_dir
 from .state_file import load_state_file, update_state_file
@@ -32,6 +32,8 @@ PROVIDER_CREDS_FILENAME = "provider_creds.json"
 
 class _AccessUrlFile(BaseModel):
     """The on-disk shape."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(strict=True, extra="forbid")
 
     access_urls: dict[str, SecretStr] = Field(default_factory=dict)
 

@@ -7,8 +7,8 @@ from typing import override
 
 import pytest
 
-from simplefin_aggregator import request_counter as request_counter_module
-from simplefin_aggregator.request_counter import RequestCounter
+from sf_agg import request_counter as request_counter_module
+from sf_agg.request_counter import RequestCounter
 
 
 def test_request_counter_increments_per_provider() -> None:

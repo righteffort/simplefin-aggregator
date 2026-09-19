@@ -5,12 +5,12 @@
 Uvicorn logs every request's raw path via its own access logger, independent
 of anything an app logs itself, and does so before FastAPI's router gets a
 chance to reject a request -- including one whose method a route doesn't
-accept. A route whose path embeds a credential (a claim token in this
+accept. A route whose path embeds a credential (a setup token in this
 project's case, but this module has no idea) would otherwise have that
 credential printed straight to stdout on every request against it, regardless
 of method and regardless of any logging discipline the app itself follows.
 
-This module knows nothing about SimpleFIN, claim tokens, or routes -- it's a
+This module knows nothing about SimpleFIN, setup tokens, or routes -- it's a
 generic "redact matching path prefixes in an access log" utility. The caller
 supplies what to redact.
 """

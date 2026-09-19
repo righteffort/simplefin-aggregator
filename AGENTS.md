@@ -2,7 +2,7 @@
 
 # Working agreements
 
-`simplefin-aggregator` is a single-user server that speaks [SimpleFIN protocol
+`sf-agg` is a single-user server that speaks [SimpleFIN protocol
 v1](https://www.simplefin.org/protocol-v1.html) to a personal-finance client
 app and proxies one or more SimpleFIN providers behind it. It holds
 credentials that read the user's bank data, and most of its design follows
@@ -14,13 +14,14 @@ This file is how to work here; it does not restate either.
 
 ## Verification
 
-After every change, all four:
+After every change, all five — what CI runs:
 
 ```sh
 uv run ruff format --check .
 uv run ruff check .
 uv run basedpyright
 uv run pytest
+uv run scripts/sf_agg_smoke.py
 ```
 
 A subset is not sufficient, however mechanical the edit. basedpyright runs a
@@ -57,14 +58,18 @@ warning category does not license the next one.
 - **A test docstring says succinctly what the test pins, not why the code is
   right.** The code's rationale belongs on the code — a reader debugging a
   failure wants the requirement, and a reader asking why the code is that way is
-  not in the test file.
+  not in the test file. Omit one that only restates the test's name: it reads as
+  a second statement of what is tested, and hides any gap between the name and
+  the body.
 - **Say which tests pin a requirement and which pin current behavior** — an
   input the code declines to normalize, a gap left open on purpose — so a
   later change knows whether altering one is allowed or a regression.
-- **Never make a real outbound network call**, in the suite or in a manual
-  check, even where the sandbox would allow it. Use loopback fakes or a mock
-  transport. `scripts/manual_verify.py` is the one deliberate exception: it is
-  human-run, and stays that way.
+- **Never address a host off this machine**, in the suite or in a manual
+  check, even where the sandbox would allow it. Loopback only: use a mock
+  transport, a loopback fake, or `scripts/sf_server_fake.py`.
+- **Name a helper that checks a test's outcome `_assert_…`**, so a test whose
+  last line calls it visibly asserts something. An `assert` that only guards a
+  setup step does not make its helper an `_assert_…` one.
 - **Index a leak corpus by misparse shape, not by syntactic position.** A
   marked secret placed where a password belongs does not exercise the case
   where a password prefix is read as a port; that needs `8443/secret`.
@@ -264,20 +269,6 @@ Each step ends with this cycle:
 7. **Squash into one commit after sign-off**, with a message describing the
    step rather than the review rounds. Squashing belongs to the user's reply,
    not to your own judgment that every finding is handled.
-
-## Terminology
-
-- **"client" or "client app"**, never "consumer", for the app talking to this
-  aggregator. Where "client" would be ambiguous with an HTTP client to a
-  provider, write "client app".
-- **The client app is generic.** Actual Budget is the motivating example, not
-  a dependency and not a special case — never bake it into naming, logic, or
-  assumptions about client behavior.
-- **"a provider the built-in list does not name"**, not "a self-hosted
-  provider", for a config-supplied entry. Self-hosting is only one reason an
-  entry is missing; a real third-party provider that is simply not built in is
-  at least as likely, and the other wording tells that user the feature is not
-  for them.
 
 ## Judgment
 

@@ -2,7 +2,7 @@
 
 """The whole flow, checked for the one thing this design exists to prevent.
 
-An app is issued a setup token, claims it, uses what it gets back, and is
+A client is added, exchanges its setup token, uses what it gets back, and is
 listed -- and none of the three secrets involved appears in anything a person
 or a log file would see. This reads as a confirmation rather than a defense:
 the store holds digests, so there is nothing in it to leak in the first place.
@@ -22,9 +22,9 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from typer.testing import CliRunner
 
-from simplefin_aggregator import cli
-from simplefin_aggregator.app_tokens import app_tokens_path
-from simplefin_aggregator.provider_access_urls import provider_creds_path, save_access_url
+from sf_agg import cli
+from sf_agg.agg_creds import agg_creds_path
+from sf_agg.provider_access_urls import provider_creds_path, save_access_url
 
 from .support import PROVIDER_KEY, install_provider_transport, make_app
 
@@ -56,9 +56,7 @@ def test_a_full_flow_puts_no_credential_anywhere_a_person_would_see(
 
     with caplog.at_level(logging.DEBUG):
         issued = runner.invoke(
-            cli.app,
-            ["app", "new", "actual-budget"],
-            env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)},
+            cli.app, ["client", "add", "actual-budget"], env={"SF_AGG_DIR": str(tmp_path)}
         )
         setup_token = issued.stdout.strip()
         claim_url = base64.b64decode(setup_token, validate=True).decode("ascii")
@@ -78,26 +76,22 @@ def test_a_full_flow_puts_no_credential_anywhere_a_person_would_see(
             )
             accounts = client.get("/simplefin/accounts", auth=(username, password))
 
-        listed = runner.invoke(
-            cli.app, ["app", "list"], env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)}
-        )
+        listed = runner.invoke(cli.app, ["client", "list"], env={"SF_AGG_DIR": str(tmp_path)})
 
     assert claimed.status_code == HTTPStatus.OK
     assert accounts.status_code == HTTPStatus.OK
     assert listed.exit_code == 0
 
-    stored = app_tokens_path(tmp_path).read_text()
+    stored = agg_creds_path(tmp_path).read_text()
     # Everything the flow put somewhere a person or a log file would see,
     # except the one stdout line the setup token is deliberately printed on.
     # This application's own log records. The others captured here belong to
     # the test client, standing in for a client app that would run in another
     # process: what this server logs for that same request is uvicorn's access
-    # line, and `test_serve.py` pins that the claim token is redacted out of
+    # line, and `test_serve.py` pins that the setup token is redacted out of
     # it. A provider request's log line is pinned in `test_accounts_endpoint`.
     logged = "\n".join(
-        record.getMessage()
-        for record in caplog.records
-        if record.name.startswith("simplefin_aggregator")
+        record.getMessage() for record in caplog.records if record.name.startswith("sf_agg")
     )
     surfaces = [
         issued.stderr,
@@ -113,7 +107,7 @@ def test_a_full_flow_puts_no_credential_anywhere_a_person_would_see(
         assert secret not in everything_else
 
     # The setup token is on stdout once and that is the whole of its life; the
-    # credentials are minted later and by the server, so `app new`'s output is
+    # credentials are minted later and by the server, so `client add`'s output is
     # not where they could have gone.
     assert claim_secret not in listed.stdout
     assert issued.stdout == f"{setup_token}\n"
@@ -178,7 +172,7 @@ key = "second-bank"
 
     monkeypatch.setattr(cli.uvicorn, "run", fake_run)  # pyright: ignore[reportPrivateLocalImportUsage]
 
-    result = runner.invoke(cli.app, ["serve"], env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)})
+    result = runner.invoke(cli.app, ["serve"], env={"SF_AGG_DIR": str(tmp_path)})
 
     assert result.exit_code == 1
     # Both providers are named, which is the report this test exists to pin.

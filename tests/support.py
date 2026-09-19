@@ -13,14 +13,9 @@ from typing import TYPE_CHECKING, NamedTuple, cast
 import httpx2
 from pydantic import SecretStr
 
-from simplefin_aggregator.app import _AppState, create_app  # pyright: ignore[reportPrivateUsage]
-from simplefin_aggregator.app_tokens import (
-    app_tokens_path,
-    claim_app_token,
-    new_app_token,
-    update_app_tokens,
-)
-from simplefin_aggregator.config import Config, config_from_mapping
+from sf_agg.agg_creds import agg_creds_path, exchange_agg_creds, new_agg_creds, update_agg_creds
+from sf_agg.app import _AppState, create_app  # pyright: ignore[reportPrivateUsage]
+from sf_agg.config import Config, config_from_mapping
 
 
 if TYPE_CHECKING:
@@ -108,22 +103,21 @@ def make_config(
     )
 
 
-def make_claimed_app(config_dir: Path, key: str = "test-app") -> tuple[str, str]:
-    """Put one app that has already claimed into the store.
+def add_client_and_exchange(config_dir: Path, key: str = "test-client") -> tuple[str, str]:
+    """Add a client and exchange its setup token, returning the credentials issued.
 
-    Returns what it authenticates with, which exists nowhere else: the store
-    keeps only digests of it.
+    They exist nowhere else: the store keeps only their digests.
     """
-    with update_app_tokens(app_tokens_path(config_dir)) as apps:
-        _, unclaimed = new_app_token()
-        credentials, apps[key] = claim_app_token(unclaimed)
+    with update_agg_creds(agg_creds_path(config_dir)) as creds:
+        _, unexchanged = new_agg_creds()
+        credentials, creds[key] = exchange_agg_creds(unexchanged)
     return credentials.username.get_secret_value(), credentials.password.get_secret_value()
 
 
-def make_unclaimed_app(config_dir: Path, key: str = "test-app") -> str:
-    """Put one app with an unspent setup token into the store, returning that secret."""
-    with update_app_tokens(app_tokens_path(config_dir)) as apps:
-        secret, apps[key] = new_app_token()
+def add_client(config_dir: Path, key: str = "test-client") -> str:
+    """Add a client, returning its claim secret, which the store keeps only a digest of."""
+    with update_agg_creds(agg_creds_path(config_dir)) as creds:
+        secret, creds[key] = new_agg_creds()
     return secret
 
 
@@ -141,13 +135,13 @@ def make_app(
     """create_app with the shared test config, its one claimed provider, and a store.
 
     The store is named rather than passed, because the server reads it per
-    request: a test that revokes an app mid-run writes the file and the next
+    request: a test that revokes a client mid-run writes the file and the next
     request sees it.
     """
     return create_app(
         config if config is not None else make_config(),
         access_urls if access_urls is not None else make_access_urls(),
-        app_tokens_path(config_dir),
+        agg_creds_path(config_dir),
     )
 
 

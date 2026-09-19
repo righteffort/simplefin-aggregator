@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
-"""Build the setup token a client app uses to claim this aggregator."""
+"""Build the setup token a client app exchanges for an access URL to this aggregator."""
 
 from __future__ import annotations
 

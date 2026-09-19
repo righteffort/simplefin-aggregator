@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import pytest
 
-from simplefin_aggregator.provider_registry import (
+from sf_agg.provider_registry import (
     KNOWN_PROVIDERS,
     ProviderEntry,
     ProviderRegistryError,
     find_provider,
     merged_providers,
 )
-from simplefin_aggregator.url_validation import UrlValidationError, parse_root
+from sf_agg.url_validation import UrlValidationError, parse_root
 
 
 # Spelled out rather than derived from KNOWN_PROVIDERS: keys are permanent

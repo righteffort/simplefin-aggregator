@@ -5,7 +5,7 @@
 The threat is phishing and paste error. A SimpleFIN setup token is a
 base64-encoded URL the user copies from a web page; if that page was a
 lookalike -- a similar-looking domain, or a Unicode homograph of a real one --
-the token points entirely at attacker infrastructure, and claiming it hands
+the token points entirely at attacker infrastructure, and exchanging it hands
 over credentials that are replayed on every sync thereafter. Asking the user to
 confirm the host does not help, because in the phishing case their memory of
 where they just were *is* the attacker's domain. Exact matching against
@@ -28,7 +28,7 @@ Three rules, each with a limit worth knowing:
    resolved.
 
 3. Messages do not print secrets -- an access URL's credentials, a claim URL's
-   setup token. Best effort rather than a guarantee: see `UrlValidationError`.
+   setup token. Best effort, not a guarantee: see `UrlValidationError`.
 """
 
 from __future__ import annotations
@@ -45,8 +45,8 @@ class UrlValidationError(Exception):
 
     A message names a URL only through `NormalizedUrl.origin` or
     `origin_and_path`, never the raw string: an access URL's raw string holds
-    the Basic Auth password, and a claim URL's path holds the one-time setup
-    token, which is still live and unclaimed when a mismatch is reported. A
+    the Basic Auth password, and a claim URL's path holds a secret that is still
+    live when a mismatch is reported, with its setup token not yet exchanged. A
     provider root is configuration rather than a secret, so messages about one
     name it in full.
 
@@ -192,8 +192,8 @@ def parse_root(raw: str) -> NormalizedUrl:
         creds_msg = f"provider root {root.origin_and_path} must not contain credentials"
         raise UrlValidationError(creds_msg)
 
-    # https is always allowed. http is allowed only for a self-hosted server
-    # reached over the loopback interface.
+    # https is always allowed. http is allowed only for a server reached over
+    # the loopback interface.
     if not (root.scheme == "https" or (root.scheme == "http" and is_loopback_host(root.host))):
         scheme_msg = (
             f"provider root {root.origin_and_path} must use https, "

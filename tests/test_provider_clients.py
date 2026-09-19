@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from base64 import b64decode
 
-from simplefin_aggregator.provider_clients import build_provider_client
-from simplefin_aggregator.url_validation import parse_root, validate_access_url
+from sf_agg.provider_clients import build_provider_client
+from sf_agg.url_validation import parse_root, validate_access_url
 
 
 def test_build_provider_client_bare_hostname() -> None:

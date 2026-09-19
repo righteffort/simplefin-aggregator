@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from simplefin_aggregator.access_log import (
+from sf_agg.access_log import (
     _RedactPathFilter,  # pyright: ignore[reportPrivateUsage] -- testing the filter directly
     install_access_log_redaction,
 )

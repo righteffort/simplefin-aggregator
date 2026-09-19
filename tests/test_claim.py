@@ -11,10 +11,10 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from simplefin_aggregator import cli
-from simplefin_aggregator.provider_access_urls import load_access_urls, provider_creds_path
-from simplefin_aggregator.provider_registry import KNOWN_PROVIDERS
-from simplefin_aggregator.url_validation import parse_url
+from sf_agg import cli
+from sf_agg.provider_access_urls import load_access_urls, provider_creds_path
+from sf_agg.provider_registry import KNOWN_PROVIDERS
+from sf_agg.url_validation import parse_url
 
 from .support import echo_the_basic_auth_password, echoing_provider
 
@@ -25,13 +25,13 @@ if TYPE_CHECKING:
 
     from typer.testing import Result
 
-    from simplefin_aggregator.url_validation import NormalizedUrl
+    from sf_agg.url_validation import NormalizedUrl
 
 runner = CliRunner()
 
 PROVIDER_KEY = "my-bank"
 PROVIDER_ROOT = "https://provider.example.com/simplefin"
-CLAIM_URL = f"{PROVIDER_ROOT}/claim/some-setup-token"
+CLAIM_URL = f"{PROVIDER_ROOT}/claim/some-claim-secret"
 SETUP_TOKEN = base64.b64encode(CLAIM_URL.encode("ascii")).decode("ascii")
 PROVIDER_PASSWORD = "s3cret-provider-password"  # noqa: S105
 # Derived, so that changing the password cannot leave the leak assertions
@@ -119,10 +119,7 @@ def _run_claim(
     """Invoke `claim` through the provider menu, then feed it the token."""
     _ = _write_config(tmp_path, config)
     return runner.invoke(
-        cli.app,
-        ["claim"],
-        input=f"{choice}\n{token}\n",
-        env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)},
+        cli.app, ["claim"], input=f"{choice}\n{token}\n", env={"SF_AGG_DIR": str(tmp_path)}
     )
 
 
@@ -132,17 +129,14 @@ def _run_claim_with_provider(
     """Invoke `claim <provider>`, which skips the menu, then feed it the token."""
     _ = _write_config(tmp_path, config)
     return runner.invoke(
-        cli.app,
-        ["claim", provider],
-        input=f"{token}\n",
-        env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)},
+        cli.app, ["claim", provider], input=f"{token}\n", env={"SF_AGG_DIR": str(tmp_path)}
     )
 
 
 def _echo_the_request_path(request_text: str) -> str:
     """Compose a status line carrying back the path the request was made on.
 
-    The path of a claim URL is the setup token, so this is a provider handing
+    The path of a claim URL holds its claim secret, so this is a provider handing
     back the one value the command exists to protect.
     """
     first_line = request_text.split("\r\n", maxsplit=1)[0].split(" ")
@@ -150,15 +144,15 @@ def _echo_the_request_path(request_text: str) -> str:
     return f"NOT-HTTP {path}"
 
 
-def test_a_provider_cannot_put_a_setup_token_on_the_terminal_by_echoing_it(tmp_path: Path) -> None:
+def test_a_provider_cannot_put_a_claim_secret_on_the_terminal_by_echoing_it(tmp_path: Path) -> None:
     """Requirement: nothing a provider puts on the wire is rendered by this command.
 
-    The claim POST's path is the live setup token, so a provider handing that
+    The claim POST's path holds a live claim secret, so a provider handing that
     path back is offering the one value this command exists to protect. The
-    token is still unspent when this happens, which is what makes it worth
+    setup token is still unexchanged when this happens, which is what makes it worth
     having.
     """
-    secret_segment = "unspent-setup-token"  # noqa: S105
+    secret_segment = "unexchanged-claim-secret"  # noqa: S105
     with echoing_provider(_echo_the_request_path) as (port, echoed):
         root = f"http://127.0.0.1:{port}/simplefin"
         token = base64.b64encode(f"{root}/claim/{secret_segment}".encode("ascii")).decode("ascii")
@@ -166,7 +160,7 @@ def test_a_provider_cannot_put_a_setup_token_on_the_terminal_by_echoing_it(tmp_p
         result = _run_claim_with_provider(tmp_path, PROVIDER_KEY, token=token, config=config)
 
     assert echoed == [f"NOT-HTTP /simplefin/claim/{secret_segment}"], (
-        "the provider did hand the live token back, which is what the rest of this tests"
+        "the provider did hand the live claim secret back, which is what the rest of this tests"
     )
     assert result.exit_code == 1
     assert "RemoteProtocolError" in result.stderr, (
@@ -288,10 +282,10 @@ def test_claim_fails_on_an_invalid_config_without_reaching_the_provider(
     assert "error" in result.stderr
 
 
-def test_claim_fails_on_an_unreadable_store_before_spending_the_token(
+def test_claim_fails_on_an_unreadable_store_before_exchanging_the_token(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
-    """A store that cannot be read must fail while the token is still claimable."""
+    """A store that cannot be read must fail while the setup token can still be exchanged."""
     _ = provider_creds_path(tmp_path).write_text("{not json")
 
     result = _run_claim(tmp_path, SETUP_TOKEN)
@@ -305,7 +299,7 @@ def test_claim_fails_on_an_unreadable_store_before_spending_the_token(
     os.name == "posix" and os.geteuid() == 0,
     reason="root writes a directory whatever its mode says",
 )
-def test_claim_fails_on_an_unwritable_config_directory_before_spending_the_token(
+def test_claim_fails_on_an_unwritable_config_directory_before_exchanging_the_token(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
     """The store is written only after the POST, so its directory is checked before it."""
@@ -316,7 +310,7 @@ def test_claim_fails_on_an_unwritable_config_directory_before_spending_the_token
     # the writability check that has to catch this.
     config_dir.chmod(0o500)
 
-    result = runner.invoke(cli.app, ["claim"], env={"SIMPLEFIN_AGGREGATOR_DIR": str(config_dir)})
+    result = runner.invoke(cli.app, ["claim"], env={"SF_AGG_DIR": str(config_dir)})
 
     assert result.exit_code == 1
     assert claim_succeeds == []
@@ -382,7 +376,7 @@ def test_claim_accepts_a_token_that_strict_base64_would_reject(
     assert claim_succeeds == [CLAIM_URL]
 
 
-def test_claim_says_the_token_is_unspent_when_the_claim_url_is_unparseable(
+def test_claim_says_the_token_is_unused_when_the_claim_url_is_unparseable(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
     """The advice has to hold for every rejection, not just a root mismatch."""
@@ -390,7 +384,7 @@ def test_claim_says_the_token_is_unspent_when_the_claim_url_is_unparseable(
 
     assert result.exit_code == 1
     assert claim_succeeds == []
-    assert "still unspent" in result.stderr
+    assert "token is still valid" in result.stderr
 
 
 def test_claim_with_a_token_decoding_to_non_ascii_fails(
@@ -408,7 +402,7 @@ def test_claim_with_a_token_decoding_to_non_ascii_fails(
 def test_claim_rejects_a_claim_url_outside_the_selected_root_before_any_request(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
-    lookalike = "https://provider.example.com.evil.test/simplefin/claim/some-setup-token"
+    lookalike = "https://provider.example.com.evil.test/simplefin/claim/some-claim-secret"
     token = base64.b64encode(lookalike.encode("ascii")).decode("ascii")
 
     result = _run_claim(tmp_path, token)
@@ -416,8 +410,8 @@ def test_claim_rejects_a_claim_url_outside_the_selected_root_before_any_request(
     assert result.exit_code == 1
     assert claim_succeeds == [], "a hostile host must not learn the token is live"
     assert "https://provider.example.com.evil.test is not valid" in result.stderr
-    assert "some-setup-token" not in result.output, "the token is still unclaimed"
-    assert "still unspent" in result.stderr
+    assert "some-claim-secret" not in result.output, "the token is still unexchanged"
+    assert "is still valid" in result.stderr
     assert "[[custom_providers]]" in result.stderr
     assert str(tmp_path / "config.toml") in result.stderr
 
@@ -439,7 +433,7 @@ def test_claim_reports_a_rejected_token_as_possibly_compromised(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     requested = _install_provider(
-        monkeypatch, _responds(403, "claim token does not exist or was already used")
+        monkeypatch, _responds(403, "setup token does not exist or was already used")
     )
 
     result = _run_claim(tmp_path, SETUP_TOKEN)
@@ -449,7 +443,7 @@ def test_claim_reports_a_rejected_token_as_possibly_compromised(
     assert "403" in result.stderr
     assert "revoked at the provider" in result.stderr
     assert "Run `claim` again" not in result.stderr, (
-        "a 403 already says the token is spent -- retrying it is not useful advice"
+        "a 403 already says the token is exchanged -- retrying it is not useful advice"
     )
     assert "already used" not in result.output, "a provider's response body is not echoed"
 
@@ -565,7 +559,7 @@ def test_naming_the_provider_skips_the_menu(tmp_path: Path, claim_succeeds: list
     assert claim_succeeds == [CLAIM_URL]
 
 
-def test_a_provider_no_entry_defines_is_refused_before_the_token_is_spent(
+def test_a_provider_no_entry_defines_is_refused_before_the_token_is_exchanged(
     tmp_path: Path, claim_succeeds: list[str]
 ) -> None:
     result = _run_claim_with_provider(tmp_path, "not-a-provider")
@@ -598,7 +592,7 @@ def test_claim_refuses_an_extra_argument_without_echoing_it(
         cli.app,
         ["claim", PROVIDER_KEY, SETUP_TOKEN],
         input=f"{SETUP_TOKEN}\n",
-        env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)},
+        env={"SF_AGG_DIR": str(tmp_path)},
     )
 
     assert result.exit_code == 1
@@ -638,7 +632,7 @@ def test_a_succeeding_probe_confirms_the_credentials_work(
 def test_a_failing_probe_warns_and_exits_zero_but_keeps_the_stored_access_url(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Requirement: a broken probe is not a failed claim -- the access URL is already spent for."""
+    """Requirement: a broken probe is not a failed claim -- the setup token is already exchanged."""
     _ = _install_provider(monkeypatch, _responds(200, ACCESS_URL))
     _ = _install_probe(monkeypatch, _responds(500))
 
@@ -683,7 +677,7 @@ def test_a_provider_cannot_leak_its_credential_via_the_probes_malformed_reply(
         config = CONFIG_TOML.replace(PROVIDER_ROOT, root)
         access_url = f"http://user:{PROVIDER_PASSWORD}@127.0.0.1:{port}/simplefin"
         _ = _install_provider(monkeypatch, _responds(200, access_url))
-        token = base64.b64encode(f"{root}/claim/some-setup-token".encode("ascii")).decode("ascii")
+        token = base64.b64encode(f"{root}/claim/some-claim-secret".encode("ascii")).decode("ascii")
 
         result = _run_claim(tmp_path, token, config=config)
 

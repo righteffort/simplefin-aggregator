@@ -1,12 +1,12 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 
-# simplefin-aggregator
+# SimpleFIN Aggregator
 
-A server that implements the [SimpleFIN Bridge
-protocol (version 1)](https://www.simplefin.org/protocol-v1.html) by aggregating the
-data from one or more SimpleFIN providers. It is intended for use by a
-personal finance app -- Actual Budget is the motivating example, but
-any personal finance app that supports SimpleFIN will work.
+A server that implements the [SimpleFIN protocol (version
+1)](https://www.simplefin.org/protocol-v1.html) by aggregating the data from one
+or more SimpleFIN providers. It is intended for use by a personal finance app —
+Actual Budget is the motivating example, but any personal finance app that
+supports SimpleFIN will work.
 
 As needed it makes requests to the providers you configure and merges their
 answers into one, so your client app sees the accounts at all of them as if they
@@ -24,20 +24,20 @@ uv sync
 
 ### 1. Write a config file
 
-Copy `config.toml` to the `~/.config/simplefin-aggregator/` directory
+Copy `config.toml` to the `~/.config/sf-agg/` directory
 (default) or a location of your choice and edit it. **This comes
-first:** `claim`, `app new` and `serve` all access the config, so it
+first:** `claim`, `client add` and `serve` all access the config, so it
 has to exist and be valid before you can do anything else.
 
 ```sh
-mkdir -p ~/.config/simplefin-aggregator
-chmod 700 ~/.config/simplefin-aggregator
-cp -i config.toml ~/.config/simplefin-aggregator/
-chmod 600 ~/.config/simplefin-aggregator/config.toml
-$EDITOR ~/.config/simplefin-aggregator/config.toml
+mkdir -p ~/.config/sf-agg
+chmod 700 ~/.config/sf-agg
+cp -i config.toml ~/.config/sf-agg/
+chmod 600 ~/.config/sf-agg/config.toml
+$EDITOR ~/.config/sf-agg/config.toml
 ```
 
-Set the `SIMPLEFIN_AGGREGATOR_DIR` environment variable if you did not use the
+Set the `SF_AGG_DIR` environment variable if you did not use the
 default directory. The `config.toml` in this repository is a template to
 copy: edit the copy in your config directory, since the one here is a tracked
 file that `git` will happily revert or commit.
@@ -60,21 +60,21 @@ key = "lunchflow"
 ```
 
 `[[custom_providers]]` adds a provider the built-in list does not name —
-a third party that isn't built in, or a bridge you run yourself:
+a third party that isn't built in, or a provider you run yourself:
 
 ```toml
 [[custom_providers]]
-key = "my-bridge"
+key = "my-provider"
 root = "https://simplefin.example.com/simplefin"
 
 [[providers]]
-key = "my-bridge"
+key = "my-provider"
 ```
 
 `key` is the name you refer to it by; it must match `[a-z0-9][a-z0-9-]*` and
 must be unique. It is also what the claim menu shows for this provider.
 `root` (with `/` appended if it is not specified) is
-the prefix of the provider's claim and access URLs. It must be
+the prefix of the provider's claim and access URLs. `root`'s scheme must be
 `https`, unless the host is a literal loopback IP address such as
 `127.0.0.1` or `[::1]`.
 
@@ -122,8 +122,8 @@ every account at that provider vanishes and a set of new, unrelated ones
 appears.
 
 **If your client app already uses a provider directly, set `prefix = ""` for
-that provider before pointing the app at this aggregator,** so that the account
-ids are unchanged when using the aggregator. Only one provider may have a blank
+that provider before changing your app to use this aggregator,** so that the account
+ids do not change. Only one provider may have a blank
 prefix, unless you set `allow_multiple_blank_prefixes = true`.
 
 **If your client app already holds accounts from several providers, synced
@@ -149,29 +149,29 @@ of them. This has these consequences:
   providers. If you observe this, add a prefix to one of the providers with
   colliding account ids.
 
-### 2. Claim a SimpleFIN setup token
+### 2. Claim access URLs with SimpleFIN setup tokens
 
-For each of your providers: Get a one-time-use setup token, then:
+For each of your providers: Get a one-time-use setup token, then exchange them for access URLs:
 
 ```sh
-uv run simplefin-aggregator claim [<key>]
+uv run sf-agg claim [<key>]
 ```
 
-`claim` prompts for the setup token, uses it to obtain an access URL, and
+`claim` prompts for the setup token, exchanges it for an access URL, and
 stores that in `provider_creds.json` in the config directory. It asks which
 provider the token came from unless `<key>` tells it. Naming the
 wrong provider is an error rather than a guess: the access URL a provider
 returns has to sit under the root that key names.
 
-If the claim request fails, you will need to retry. First, try running `claim`
-again with the same token. If the token is still valid, you're done. If it is
-not, you should revoke it at the provider, and obtain a new one.
+If `claim` fails, you will need to retry. First, try running `claim`
+again with the same token. If it succeeds, you're done. If it does
+not, you should revoke the setup token at the provider, and get a new one.
 
 The prompt hides what you type. To run `claim` without a terminal, redirect a
 file instead:
 
 ```sh
-uv run simplefin-aggregator claim <key> < token-file
+uv run sf-agg claim <key> < token-file
 ```
 
 **`provider_creds.json` cannot be regenerated.** A setup token is
@@ -182,61 +182,61 @@ Note: if you change the key of a custom provider, its stored access URL is
 orphaned until you edit the matching entry in `provider_creds.json` to use the
 new key.
 
-### 3. Issue your client app a setup token
+### 3. Add your client app
 
 ```sh
-uv run simplefin-aggregator app new actual-budget
+uv run sf-agg client add actual-budget
 ```
 
-The key names the app in `app list` and `app revoke`, and must match
-`[a-z0-9][a-z0-9-]*`. The command prints a base64 setup token on stdout and nothing
+The key names the client in `client list` and `client revoke`, and must match
+`[a-z0-9][a-z0-9-]*`. The command prints a setup token on stdout and nothing
 else — the same shape a real SimpleFIN provider hands out — so `$(...)`
 captures it cleanly.
 
-**It is shown once.** The aggregator stores a SHA-256 digest of it and nothing
-else, so it cannot be printed again; if you lose it before the app claims it,
-run `app regen actual-budget` for a fresh one.
+**It is shown once.** The aggregator only stores a digest of it; if you lose it
+before the client uses it, run `client reset actual-budget` for a new one.
 
 ### 4. Run the server
 
 ```sh
-uv run simplefin-aggregator serve
+uv run sf-agg serve
 ```
 
-This starts serving on `bind_host:bind_port` (default `127.0.0.1:8080`). It
+This starts serving on `bind_host:bind_port` (default `127.0.0.1:5026`). It
 refuses to start if `aggregator_creds.json` cannot be read or its directory
-cannot be written, and warns if no app has been issued a token yet.
+cannot be written, and warns if no client has been added yet.
 
-### 5. Point your app at it
+### 5. Configure your client app
 
 In Actual Budget (or any other SimpleFIN client), when it asks for a SimpleFIN
-setup token, give it the string from step 3. The app decodes it, POSTs to this
+setup token, give it the string from step 3. The client app decodes it, POSTs to this
 aggregator's claim URL, and receives back an access URL with a freshly
 generated username and password embedded in it, which it uses for all
 subsequent `/accounts` requests.
 
-That claim spends the token. A second POST to the same URL gets a 403, exactly
-as a token that was never issued does — the aggregator keeps no record that
-could tell the two apart.
+The setup token can only be used once. A second POST to the same URL gets a 403,
+exactly as a token that was never issued does — the aggregator keeps no record
+that could tell the two apart.
 
 ## Managing client apps
 
 ```sh
-uv run simplefin-aggregator app list
-uv run simplefin-aggregator app revoke <key>
-uv run simplefin-aggregator app regen  <key>
+uv run sf-agg client list
+uv run sf-agg client revoke <client>
+uv run sf-agg client reset  <client>
 ```
 
-`app list` shows each app's key, status and timestamps. It cannot show you a
-credential, because the store holds none: everything in it is a digest,
-verified against what an app presents and never reproduced.
+`client list` shows each client's key and when it was added. It cannot show
+you a credential, because the store holds none: everything in it is a digest,
+verified against what a client presents and never reproduced.
 
-`app revoke` removes an app. Its credentials stop working on the next request
-— the server reads the store every time, so there is nothing to restart.
+`client revoke` removes a client. Its credentials stop working on the next
+request — the server reads the store every time, so there is nothing to
+restart.
 
-`app regen` issues an app a new setup token, keeping its key. Whatever it held
-before — live credentials or an unclaimed token — stops working immediately.
-This is the only way to reuse a key.
+`client reset` revokes a client's credentials and issues it a new setup token,
+keeping its key and creation time. Whatever it held before — live credentials
+or an unused setup token — stops working immediately.
 
 **`aggregator_creds.json` is disposable.** Losing it costs one fresh setup
 token per client app, which is a different situation from
@@ -249,11 +249,8 @@ install a digest of a credential they chose.
 These are typically used directly by a client app such as Actual Budget; as an
 end user you can ignore this section.
 
-  - `POST /simplefin/claim/{token}` — spends a setup token once, returning an
-    access URL. `403` if the token was never issued or has already been
-    claimed; the two are deliberately indistinguishable.
   - `GET /simplefin/accounts` — requires HTTP Basic Auth with the credentials
-    one claim issued; asks the configured providers and merges their answers.
+    `claim` issued; asks the configured providers and merges their answers.
   - `GET /simplefin/info` — answers `{"versions": ["1.0"]}`, the protocol
     version supported by this aggregator for its clients; no auth required.
 
@@ -279,27 +276,30 @@ The image contains only the application. Mount your config directory at
 server binds the container's own loopback and the published port reaches
 nothing. Publishing to `127.0.0.1`, as below, keeps it off the network.
 
+If you changed the port in `base_url` in your config, set EXTERNAL_PORT to that
+value before running `docker run` below.
+
 ```sh
-docker build -t simplefin-aggregator .
+docker build -t sf-agg .
 docker run --rm \
-  -p 127.0.0.1:8080:8080 \
-  -v "$HOME/.config/simplefin-aggregator:/config" \
+  -p 127.0.0.1:${EXTERNAL_PORT:-5026}:5026 \
+  -v "$HOME/.config/sf-agg:/config" \
   --user "$(id -u):$(id -g)" \
-  simplefin-aggregator
+  sf-agg
 ```
 
 `--user` keeps the container reading and writing those files as you, so their
 owner-only permissions work the same as outside Docker.
 
-To claim a provider's token from inside the container instead of on the host,
+To exchange a provider's setup token from inside the container instead of on the host,
 override the default aggregator command; the image already sets
-`SIMPLEFIN_AGGREGATOR_DIR=/config`:
+`SF_AGG_DIR=/config`:
 
 ```sh
 docker run --rm -it \
-  -v "$HOME/.config/simplefin-aggregator:/config" \
+  -v "$HOME/.config/sf-agg:/config" \
   --user "$(id -u):$(id -g)" \
-  simplefin-aggregator claim
+  sf-agg claim
 ```
 
 ## Limitations
@@ -307,8 +307,8 @@ docker run --rm -it \
 **POSIX only.** State files are locked with `fcntl.flock` and permissions are
 checked as Unix mode bits. There is no Windows fallback.
 
-**`base_url` is a literal loopback address, or HTTPS.** `http://127.0.0.1:8080`
-and `http://[::1]:8080` are accepted, because that traffic cannot leave the
+**`base_url` is a literal loopback address, or HTTPS.** `http://127.0.0.1:5026`
+and `http://[::1]:5026` are accepted, because that traffic cannot leave the
 machine. Everything else must be `https://` — `localhost` included, which is a
 name rather than an address and is rejected over http for that reason.
 
@@ -323,23 +323,15 @@ uv run pytest
 uv run ruff format --check .
 uv run ruff check .
 uv run basedpyright
+uv run scripts/sf_agg_smoke.py
 ```
 
-The test suite fakes providers with `httpx2.MockTransport` — it never makes a
-real network call.
+The test suite fakes providers — it never addresses a host off this machine.
 
-### Manual verification against the real SimpleFIN demo bridge
-
-`scripts/manual_verify.py` is a human-run smoke test against the **real**
-SimpleFIN demo bridge — not part of `pytest`, and not run in CI. It drives the
-real server end to end, from claiming provider tokens through a client app's
-sync, using throwaway demo tokens it fetches itself:
-
-```sh
-uv run scripts/manual_verify.py
-```
-
-Its docstring describes what it checks and how to pass tokens of your own.
+`scripts/sf_agg_smoke.py` is a smoke test, run by CI after the test suite. It
+drives a real `sf-agg` server end to end, from exchanging provider setup tokens
+through a client app's sync, against two providers served on loopback by
+`scripts/sf_server_fake.py`.
 
 ## AI disclosure
 

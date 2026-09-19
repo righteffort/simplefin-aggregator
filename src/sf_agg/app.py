@@ -16,12 +16,12 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from .access_url import build_access_url
-from .app_tokens import (
-    ClientCredentials,
-    UnclaimedAppToken,
-    claim_app_token,
+from .agg_creds import (
+    AccessUrlAuth,
+    UnexchangedAggCreds,
+    exchange_agg_creds,
     matches,
-    update_app_tokens,
+    update_agg_creds,
 )
 from .auth import build_client_auth_dependency
 from .merge import merge
@@ -55,9 +55,10 @@ ACCOUNTS_FORWARDED_PARAMS = frozenset(
 # The protocol version this application supports for clients.
 PROTOCOL_VERSION = "1.0"
 
-# The path segment before {token}. Also used to redact the claim token from
-# uvicorn's access log (see access_log.py) -- keeping both derived from this
-# one constant means the route and the redaction can't silently drift apart.
+# The path segment before {claim_secret}. Also used to redact the claim secret
+# from uvicorn's access log (see access_log.py) -- keeping both derived from
+# this one constant means the route and the redaction can't silently drift
+# apart.
 CLAIM_PATH_PREFIX = "/simplefin/claim/"
 
 
@@ -77,37 +78,37 @@ class ProviderAccessUrlError(Exception):
 
 
 class _UnknownSetupTokenError(Exception):
-    """No unclaimed record holds this token.
+    """No stored client credentials match this setup token.
 
-    Raised the same way whether the token never existed or has already been
-    claimed, because the store cannot tell them apart: a claim replaces the
-    record it spent, so there is nothing left that answers to a spent token.
+    Raised the same way whether the setup token never existed or has already
+    been exchanged, because the store cannot tell them apart: an exchange
+    replaces the credentials the setup token matched with ones it cannot.
     """
 
 
-def _spend_setup_token(store_path: Path, token: str) -> ClientCredentials:
-    """Exchange a setup token for the credentials it buys, once.
+def _exchange_setup_token(store_path: Path, claim_secret: str) -> AccessUrlAuth:
+    """Exchange a setup token for credentials, once.
 
     The whole exchange is one locked update, so two clients presenting the
     same token cannot both be issued credentials for it.
     """
-    with update_app_tokens(store_path) as apps:
+    with update_agg_creds(store_path) as creds:
         holder = next(
             (
                 (key, record)
-                for key, record in apps.items()
-                if isinstance(record, UnclaimedAppToken)
-                and matches(token, record.claim_token_sha256)
+                for key, record in creds.items()
+                if isinstance(record, UnexchangedAggCreds)
+                and matches(claim_secret, record.claim_secret_sha256)
             ),
             None,
         )
         if holder is None:
             # Raised out of the update rather than returned from it, so that a
-            # token matching nothing does not rewrite the store on its way to a
-            # 403.
+            # claim secret matching nothing does not rewrite the store on its
+            # way to a 403.
             raise _UnknownSetupTokenError
-        key, unclaimed = holder
-        credentials, apps[key] = claim_app_token(unclaimed)
+        key, unexchanged = holder
+        credentials, creds[key] = exchange_agg_creds(unexchanged)
     return credentials
 
 
@@ -134,7 +135,7 @@ def _resolve_access_url(
     entry = find_provider(config.provider_entries(), key)
     stored = access_urls.get(key)
     if stored is None:
-        msg = f"no access URL stored for provider {key!r}; claim one first"
+        msg = f"no access URL stored for provider {key!r}; run `claim` first"
         raise StateFileError(msg)
     return validate_access_url(entry.root, stored.get_secret_value(), provider=key)
 
@@ -201,19 +202,19 @@ def _route_requests(
 
 
 def create_app(
-    config: Config, access_urls: Mapping[str, SecretStr], app_tokens_path: Path
+    config: Config, access_urls: Mapping[str, SecretStr], agg_creds_path: Path
 ) -> FastAPI:
-    """Build the FastAPI app for a config, the access URLs claimed so far, and the app token store.
+    """Build the FastAPI app for a config, the claimed access URLs, and the aggregator creds store.
 
     Raises rather than starting a server that cannot work: every configured
-    provider that is unclaimed or holds a stored access URL that no longer
-    matches its root is named together, via `ProviderAccessUrlError`, before
-    uvicorn starts and not on the first request. This is all-or-nothing where
+    provider that has no stored access URL, or holds one that no longer matches
+    its root, is named together, via `ProviderAccessUrlError`, before uvicorn
+    starts and not on the first request. This is all-or-nothing where
     a provider that fails a live request costs only its own accounts.
 
-    The app token store is named by path rather than read here, because unlike
+    The aggregator creds store is named by path rather than read here, because unlike
     the config it is live state: every request that authenticates reads it, so
-    that `app revoke` takes effect without a restart.
+    that `client revoke` takes effect without a restart.
     """
     provider_access_urls = _resolve_all_access_urls(config, access_urls)
 
@@ -233,19 +234,21 @@ def create_app(
                 await provider_client.aclose()
 
     app = FastAPI(lifespan=lifespan)
-    require_client_auth = build_client_auth_dependency(app_tokens_path)
+    require_client_auth = build_client_auth_dependency(agg_creds_path)
 
-    @app.post(f"{CLAIM_PATH_PREFIX}{{token}}")
-    async def claim(token: str) -> PlainTextResponse:  # pyright: ignore [reportUnusedFunction]
+    @app.post(f"{CLAIM_PATH_PREFIX}{{claim_secret}}")
+    async def claim(claim_secret: str) -> PlainTextResponse:  # pyright: ignore [reportUnusedFunction]
         try:
             # Persisted before it is answered: crashing after the write costs a
-            # setup token the operator replaces with `app regen`, while
+            # setup token the operator replaces with `client reset`, while
             # crashing after the response leaves the client app holding
-            # credentials this server does not recognise -- a setup that looks
+            # credentials this server does not recognize -- a setup that looks
             # complete and silently never syncs.
-            credentials = await run_in_threadpool(_spend_setup_token, app_tokens_path, token)
+            credentials = await run_in_threadpool(
+                _exchange_setup_token, agg_creds_path, claim_secret
+            )
         except _UnknownSetupTokenError:
-            raise HTTPException(status_code=403, detail="unknown claim token") from None
+            raise HTTPException(status_code=403, detail="unknown token") from None
         except StateFileError as exc:
             raise HTTPException(status_code=500, detail="could not record the claim") from exc
         return PlainTextResponse(build_access_url(config.base_url, credentials))

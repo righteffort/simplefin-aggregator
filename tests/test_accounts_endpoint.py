@@ -14,12 +14,12 @@ from fastapi.testclient import TestClient
 
 from .support import (
     ProviderSpec,
+    add_client_and_exchange,
     echo_the_basic_auth_password,
     echoing_provider,
     install_provider_transport,
     make_access_urls,
     make_app,
-    make_claimed_app,
     make_config,
 )
 
@@ -72,7 +72,7 @@ def _aggregating(
     it was asked once.
     """
     reported: Mapping[str, Sequence[Account]] = accounts if accounts is not None else {}
-    auth = make_claimed_app(tmp_path)
+    auth = add_client_and_exchange(tmp_path)
     config = make_config(*specs, allow_multiple_blank_prefixes=allow_multiple_blank_prefixes)
     app = make_app(tmp_path, config, make_access_urls(*specs))
     calls: dict[str, list[Params]] = {spec.key: [] for spec in specs}
@@ -85,7 +85,7 @@ def _aggregating(
 
 
 def test_accounts_without_basic_auth_is_rejected(tmp_path: Path) -> None:
-    _ = make_claimed_app(tmp_path)
+    _ = add_client_and_exchange(tmp_path)
     app = make_app(tmp_path)
 
     with TestClient(app) as client:
@@ -101,7 +101,7 @@ def test_accounts_relays_every_key_a_provider_sent_inside_an_account(tmp_path: P
     async def handler(_request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(HTTPStatus.OK, json={"accounts": [account]})
 
-    auth = make_claimed_app(tmp_path)
+    auth = add_client_and_exchange(tmp_path)
     app = make_app(tmp_path)
 
     with TestClient(app) as client:
@@ -114,15 +114,15 @@ def test_accounts_relays_every_key_a_provider_sent_inside_an_account(tmp_path: P
     )
 
 
-def test_accounts_forwards_repeated_account_params(tmp_path: Path) -> None:
-    """Requirement: a filter naming several accounts reaches the provider naming all of them."""
+def test_accounts_forwards_multiple_account_params(tmp_path: Path) -> None:
+    """Requirement: a filter naming multiple accounts reaches the provider naming all of them."""
     received_params: list[tuple[str, str]] = []
 
     async def handler(request: httpx2.Request) -> httpx2.Response:
         received_params.extend(request.url.params.multi_items())
         return httpx2.Response(HTTPStatus.OK, json={"accounts": []})
 
-    auth = make_claimed_app(tmp_path)
+    auth = add_client_and_exchange(tmp_path)
     app = make_app(tmp_path)
 
     with TestClient(app) as client:
@@ -144,7 +144,7 @@ def test_accounts_only_forwards_allowed_query_params(tmp_path: Path) -> None:
         received_params.extend(request.url.params.multi_items())
         return httpx2.Response(HTTPStatus.OK, json={"accounts": []})
 
-    auth = make_claimed_app(tmp_path)
+    auth = add_client_and_exchange(tmp_path)
     app = make_app(tmp_path)
 
     with TestClient(app) as client:
@@ -164,7 +164,7 @@ def test_accounts_does_not_relay_a_providers_403_as_its_own(tmp_path: Path) -> N
     async def handler(_request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(HTTPStatus.FORBIDDEN, content=b"forbidden by provider")
 
-    auth = make_claimed_app(tmp_path)
+    auth = add_client_and_exchange(tmp_path)
     app = make_app(tmp_path)
 
     with TestClient(app) as client:
@@ -183,7 +183,7 @@ def test_accounts_provider_redirect_is_not_relayed_to_the_client_app(tmp_path: P
             HTTPStatus.FOUND, headers={"location": "https://attacker.example.net/accounts"}
         )
 
-    auth = make_claimed_app(tmp_path)
+    auth = add_client_and_exchange(tmp_path)
     app = make_app(tmp_path)
 
     with TestClient(app) as client:
@@ -204,7 +204,7 @@ def test_accounts_answers_a_v1_body_when_a_provider_is_unreachable(
         msg = "connection refused"
         raise httpx2.ConnectError(msg, request=request)
 
-    auth = make_claimed_app(tmp_path)
+    auth = add_client_and_exchange(tmp_path)
     app = make_app(tmp_path)
 
     with TestClient(app) as client, caplog.at_level(logging.WARNING):
@@ -434,7 +434,7 @@ def test_a_provider_that_fails_is_asked_once_and_costs_only_its_own_accounts(
         attempts.append("bank-a")
         return httpx2.Response(HTTPStatus.OK, json={"accounts": [{"id": "a-1"}]})
 
-    auth = make_claimed_app(tmp_path)
+    auth = add_client_and_exchange(tmp_path)
     app = make_app(tmp_path, make_config(BANK_A, BANK_B), make_access_urls(BANK_A, BANK_B))
 
     with TestClient(app) as client, caplog.at_level(logging.WARNING):
@@ -484,7 +484,7 @@ def test_a_provider_cannot_get_its_credential_into_a_log_by_echoing_it(
 ) -> None:
     """Requirement: nothing a provider puts on the wire is rendered by this application."""
     password = "s3cret-provider-password"  # noqa: S105
-    auth = make_claimed_app(tmp_path)
+    auth = add_client_and_exchange(tmp_path)
 
     with echoing_provider(echo_the_basic_auth_password) as (port, echoed):
         provider = ProviderSpec(
@@ -514,7 +514,7 @@ def test_a_provider_request_names_no_credentials_in_the_logs_or_the_body(
     back, and that is the line credentials would reach.
     """
     password = "s3cret-provider-password"  # noqa: S105
-    auth = make_claimed_app(tmp_path)
+    auth = add_client_and_exchange(tmp_path)
 
     with _loopback_provider() as port, caplog.at_level(logging.INFO):
         provider = ProviderSpec(

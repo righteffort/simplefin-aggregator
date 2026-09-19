@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
-"""The set of providers that can supply a setup token.
+"""The set of known providers.
 
 A setup token is a base64-encoded URL pasted in from a web page, so the URL
 inside it is attacker-influenceable input (see `url_validation.py` for the
@@ -47,8 +47,6 @@ line, so they get one constraint rather than two that could drift."""
 
 @dataclass(frozen=True)
 class ProviderEntry:
-    """One provider a setup token may be claimed from."""
-
     # Stable machine identifier: the access-URL store's key and what config
     # files reference. Changing one invalidates stored access URLs and config
     # references, so treat published keys as permanent.

@@ -1,10 +1,11 @@
 [project]
 name = "simplefin-aggregator"
 version = "0.1.0"
-description = "A SimpleFIN Bridge server that fans out to one or more SimpleFIN providers."
+description = "A SimpleFIN server that fans out to one or more SimpleFIN providers."
 readme = "README.md"
 requires-python = ">=3.12.4"
 license = "GPL-3.0-only"
+license-files = ["LICENSE", "gpl-3.0.txt"]
 dependencies = [
     "fastapi>=0.141.1",
     "uvicorn>=0.52.4",
@@ -15,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-simplefin-aggregator = "simplefin_aggregator.cli:main"
+sf-agg = "sf_agg.cli:main"
 
 [dependency-groups]
 dev = [
@@ -25,12 +26,18 @@ dev = [
     "basedpyright>=1.39.10",
 ]
 
+[project.urls]
+Homepage = "https://github.com/righteffort/simplefin-aggregator/tree/main"
+Source = "https://github.com/righteffort/simplefin-aggregator.git"
+Documentation = "https://github.com/righteffort/simplefin-aggregator?tab=readme-ov-file"
+Issues = "https://github.com/righteffort/simplefin-aggregator/issues"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/simplefin_aggregator"]
+packages = ["src/sf_agg"]
 
 [tool.uv]
 python-preference = "only-managed"
@@ -79,6 +86,7 @@ skip-magic-trailing-comma = true
 include = ["src", "tests", "scripts"]
 pythonVersion = "3.12"
 typeCheckingMode = "recommended"
+executionEnvironments = [{ root = "scripts" }, { root = "." }]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

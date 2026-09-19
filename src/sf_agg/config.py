@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
-"""Configuration model and loading for simplefin-aggregator.
+"""Configuration model and loading for sf-agg.
 
 Exposes public types `Config` and `Provider`, in which every field is typed and
 never None. These are built from `_ConfigModel` and `_ProviderFileEntry`, which
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from .url_validation import NormalizedUrl
 
 
-APP_NAME = "simplefin-aggregator"
+APP_NAME = "sf-agg"
 
 # Characters that need no escaping in query parameters.
 PREFIX_PATTERN = re.compile(r"[A-Za-z0-9._:-]*")
@@ -130,7 +130,7 @@ class _ConfigModel(BaseModel):
     """The config file as written, before any field is resolved."""
 
     bind_host: str = "127.0.0.1"
-    bind_port: int = 8080
+    bind_port: int = 5026
     providers: list[_ProviderFileEntry] = Field(min_length=1)
     custom_providers: list[CustomProvider] = []
     base_url: str
@@ -142,8 +142,8 @@ class _ConfigModel(BaseModel):
         if not value.isascii():
             # A setup token carries this URL as ASCII, so an internationalized
             # host has to arrive already encoded or the token cannot be built
-            # at all -- which would otherwise be discovered after `app new` had
-            # written a record for an app it could not hand a token to.
+            # at all -- which would otherwise be discovered after `client add`
+            # had written a record for a client it could not hand a token to.
             msg = "base_url must be ASCII; give an internationalized host in its encoded form"
             raise ValueError(msg)
         parsed = urlsplit(value)
@@ -195,7 +195,7 @@ class Config:
         )
 
     def provider_entries(self) -> tuple[ProviderEntry, ...]:
-        """Every provider a token may be claimed from: the built-in ones plus this config's."""
+        """Every provider a setup token may come from: the built-in ones plus this config's."""
         return merged_providers(entry.as_provider_entry() for entry in self.custom_providers)
 
 
@@ -268,7 +268,7 @@ CONFIG_FILENAME = "config.toml"
 # The one environment variable that selects the directory. Read in `config_dir`
 # alone; every other place that needs the directory calls that, or one of the
 # `*_path` functions built on it, rather than reading the variable itself.
-DIR_ENV_VAR = "SIMPLEFIN_AGGREGATOR_DIR"
+DIR_ENV_VAR = "SF_AGG_DIR"
 
 
 def default_config_dir() -> Path:

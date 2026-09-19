@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING
 
 import httpx2
 
-from simplefin_aggregator.config import Provider
-from simplefin_aggregator.provider_response import ProviderFailure
-from simplefin_aggregator.request_counter import RequestCounter
-from simplefin_aggregator.transport import fetch, fetch_all
+from sf_agg.config import Provider
+from sf_agg.provider_response import ProviderFailure
+from sf_agg.request_counter import RequestCounter
+from sf_agg.transport import fetch, fetch_all
 
 
 if TYPE_CHECKING:

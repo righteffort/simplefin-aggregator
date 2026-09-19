@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from simplefin_aggregator.url_validation import (
+from sf_agg.url_validation import (
     UrlValidationError,
     is_loopback_host,
     parse_root,
@@ -46,7 +46,7 @@ CLAIM_URL_CASES: list[tuple[str, bool]] = [
     ("https://SIMPLEFIN.INVALID/simplefin/claim/tok", True),
     ("https://simplefin.invalid/SIMPLEFIN/claim/tok", False),
     # A trailing dot names the same host to DNS, but is left as a distinct
-    # string. Behaviour, not a requirement: normalizing it would be as correct.
+    # string. Behavior, not a requirement: normalizing it would be as correct.
     ("https://simplefin.invalid./simplefin/claim/tok", False),
     ("https://simplefin.invalid@evil.example/simplefin/claim/tok", False),
     ("https://simplefin.invalid.evil.example/simplefin/claim/tok", False),
@@ -64,7 +64,7 @@ CLAIM_URL_CASES: list[tuple[str, bool]] = [
     # A bare delimiter with nothing after it is still a query or a fragment.
     ("https://simplefin.invalid/simplefin/claim/tok?", False),
     ("https://simplefin.invalid/simplefin/claim/tok#", False),
-    # An empty path segment, left as written. Behaviour, not a requirement.
+    # An empty path segment, left as written. Behavior, not a requirement.
     ("https://simplefin.invalid//simplefin/claim/tok", False),
 ]
 
@@ -125,7 +125,7 @@ EMPTY_USERINFO_URLS = [
 def test_validate_claim_url_accepts_an_empty_userinfo_section(raw: str) -> None:
     """An empty section carries no credential, and names the same URL as one without it.
 
-    Behaviour, not a requirement: rejecting the section outright would be
+    Behavior, not a requirement: rejecting the section outright would be
     equally correct, and no provider emits one.
     """
     url = validate_claim_url(ROOT, raw, provider=PROVIDER)
@@ -221,7 +221,7 @@ def test_origin_excludes_the_path() -> None:
 def test_mismatch_message_withholds_the_setup_token() -> None:
     """The paste-error case: a genuine token, but the wrong menu entry selected.
 
-    That token is still live and unclaimed, so printing it into terminal
+    That token is still live and unexchanged, so printing it into terminal
     scrollback would hand a bearer credential to anyone who reads it.
     """
     with pytest.raises(UrlValidationError) as exc_info:
@@ -435,7 +435,7 @@ PORT_RANGE_CASES: list[tuple[str, bool]] = [
     ("https://simplefin.invalid:65535/x", True),
     # Nothing listens on port 0 -- it means "pick one for me" when binding --
     # but urlsplit's range is 0-65535 and this takes its word for it.
-    # Behaviour, not a requirement.
+    # Behavior, not a requirement.
     ("https://simplefin.invalid:0/x", True),
     ("https://simplefin.invalid:65536/x", False),
     ("https://simplefin.invalid:-1/x", False),
@@ -453,7 +453,7 @@ def test_parse_url_requires_a_port_in_range(raw: str, *, accepted: bool) -> None
 
 
 def test_a_password_ending_the_authority_early_is_not_detected() -> None:
-    """Behaviour, not a requirement: a deliberate gap, pinned so it reads as known.
+    """Behavior, not a requirement: a deliberate gap, pinned so it reads as known.
 
     An unencoded "/" in a password ends the authority before the "@", so the
     parse puts the credentials in the host, the port and the path instead --
@@ -573,7 +573,7 @@ def test_claim_url_with_escapes_on_the_right_host_is_still_rejected() -> None:
 ACCEPTED_URLS = [
     "https://simplefin.invalid",
     # parse_url does not restrict the scheme; a non-http one simply fails to
-    # match any root. Behaviour, not a requirement.
+    # match any root. Behavior, not a requirement.
     "ftp://127.0.0.1/simplefin/claim/tok",
     "https://simplefin.invalid/simplefin/claim/tok",
     "https://SIMPLEFIN.INVALID/simplefin/claim/tok",

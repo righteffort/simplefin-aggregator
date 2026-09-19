@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
-"""Command-line entry points: `claim`, `app`, and `serve`."""
+"""Command-line entry points: `claim`, `client`, and `serve`."""
 
 from __future__ import annotations
 
 import base64
 import sys
+from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Annotated, NoReturn, cast
 
@@ -16,23 +17,9 @@ from pydantic import SecretStr
 from rich.markup import escape
 
 from .access_log import install_access_log_redaction
+from .agg_creds import agg_creds_path, load_agg_creds, new_agg_creds, update_agg_creds
 from .app import CLAIM_PATH_PREFIX, ProviderAccessUrlError, create_app
-from .app_tokens import (
-    ClaimedAppToken,
-    app_tokens_path,
-    load_app_tokens,
-    new_app_token,
-    update_app_tokens,
-)
-from .config import (
-    DIR_ENV_VAR,
-    Config,
-    ConfigError,
-    config_dir,
-    config_path,
-    default_config_dir,
-    load_config,
-)
+from .config import Config, ConfigError, config_dir, config_path, load_config
 from .provider_access_urls import load_access_urls, provider_creds_path, save_access_url
 from .provider_registry import KEY_PATTERN, ProviderRegistryError, find_provider
 from .setup_token import build_setup_token
@@ -42,7 +29,6 @@ from .url_validation import UrlValidationError, validate_access_url, validate_cl
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from datetime import datetime
     from pathlib import Path
 
     from fastapi import FastAPI
@@ -55,11 +41,7 @@ if TYPE_CHECKING:
 app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
-    help=(
-        "simplefin-aggregator: a SimpleFIN Bridge server backed by other SimpleFIN "
-        f"providers. Configuration and state are in the directory ${DIR_ENV_VAR}, "
-        f"or {default_config_dir()} if unset."
-    ),
+    help="sf-agg: a SimpleFIN server backed by multiple SimpleFIN providers.",
 )
 
 
@@ -113,7 +95,7 @@ def _decode_setup_token(setup_token: str) -> str:
     except ValueError as exc:
         # binascii.Error (bad padding, and with it bad length) subclasses
         # ValueError, as does a token with non-ASCII characters in it.
-        _fail(f"error: setup token is not valid base64: {exc}")
+        _fail(f"error: pasted setup token is not valid base64: {exc}")
 
     try:
         return claim_url_bytes.decode("ascii")
@@ -123,8 +105,9 @@ def _decode_setup_token(setup_token: str) -> str:
         _fail("error: decoded setup token is not ASCII, so it is not a URL")
 
 
-# Longer than the probe's: a read timeout comes after the POST has gone out,
-# when the provider may have spent the token on a reply that never arrives.
+# Longer than the probe's, because giving up costs more here: once the POST has
+# gone out, the provider may already have exchanged the setup token, and timing
+# out then loses the access URL its reply carries.
 _CLAIM_TIMEOUT = httpx2.Timeout(30.0)
 
 
@@ -139,7 +122,7 @@ def _claim_access_url(claim_url: NormalizedUrl, entry: ProviderEntry) -> str:
     # token is safe advice here; the 403 case below is definite and gets none.
     retry_advice = (
         "This request is not retried automatically. Run `claim` again with the "
-        "same setup token: it is still valid unless the provider already spent it."
+        "same setup token: it is still valid unless the provider already exchanged it."
     )
     with _build_claim_client() as claim_client:
         try:
@@ -149,18 +132,18 @@ def _claim_access_url(claim_url: NormalizedUrl, entry: ProviderEntry) -> str:
             response = claim_client.post(claim_url.origin_and_path)
         except httpx2.HTTPError as exc:
             # Not the message: httpx2's text can quote provider-chosen bytes,
-            # and the request path here is the live setup token.
+            # and the request path here holds a live claim secret.
             _fail(
                 f"error: could not reach provider {entry.key!r} ({type(exc).__name__})",
                 retry_advice,
             )
 
     if response.status_code == HTTPStatus.FORBIDDEN:
-        already_claimed = (
-            "A setup token is claimable once. If you did not just claim this one "
+        already_used = (
+            "A setup token can only be used once. If you did not successfully use this one "
             "yourself, someone else has, and it should be revoked at the provider."
         )
-        _fail(f"error: provider {entry.key!r} rejected the setup token (403).", already_claimed)
+        _fail(f"error: provider {entry.key!r} rejected the setup token (403).", already_used)
     if response.status_code != HTTPStatus.OK:
         # The status alone. A response body is attacker-influenced, and this
         # path also catches the 3xx that redirects-disabled turns into a
@@ -217,7 +200,7 @@ def _probe_access_url(access_url: NormalizedUrl) -> str | None:
 def claim(
     ctx: typer.Context, provider: Annotated[str | None, typer.Argument(help="Provider key.")] = None
 ) -> None:
-    """Claim a one-time SimpleFIN setup token and store the access URL it returns."""
+    """Exchange a one-time provider setup token for an access URL, and store that URL."""
     # Do not use typer's default error message for extra args, in case the user
     # accidentally invoked `claim <provider> <token>`.
     if ctx.args:
@@ -225,8 +208,7 @@ def claim(
     loaded_config = _load_config_or_exit()
     store_path = provider_creds_path()
 
-    # Before the token is spent, since a file problem found after the POST is a
-    # lost credential: the token cannot be claimed a second time.
+    # Don't use the one-time-use setup token if the resulting access URL can't be written.
     try:
         _ = load_access_urls(store_path)
         check_can_save(store_path)
@@ -248,20 +230,13 @@ def claim(
     token = cast(str, typer.prompt("Setup token", hide_input=_stdin_is_a_terminal()))
 
     try:
-        # Before the POST, not after: a host you contact has already learned
-        # your egress IP and that the token is live, however you treat its
-        # reply.
+        # Do not send the token to a mismatched host.
         claim_url = validate_claim_url(entry.root, _decode_setup_token(token), provider=entry.key)
     except UrlValidationError as exc:
-        # Phrased as a checklist rather than a diagnosis, because every reason
-        # validate_claim_url rejects a URL arrives as the same exception, and
-        # there is deliberately no code on it to tell them apart. The token is
-        # unspent whichever it was: validation runs before the POST.
         what_to_check = (
-            f"Nothing was claimed and the setup token is still unspent. Check that you "
-            f"pasted the whole token and that it came from {entry.key}; a provider "
-            f"the menu does not list needs a [[custom_providers]] entry in "
-            f"{config_path()} before its tokens can be claimed."
+            "The setup token is still valid. Check that you pasted the whole token and that it "
+            f"came from {entry.key}. If it came from a provider not in the menu, you need to add "
+            f"a [[custom_providers]] entry in {config_path()}."
         )
         _fail(f"error: {exc}", what_to_check)
 
@@ -279,20 +254,15 @@ def claim(
     except StateFileError as exc:
         _fail(f"error: {exc}")
 
-    typer.echo(f"Claimed provider {entry.key!r}.")
-    typer.echo(f"note: its access URL is now in {store_path}.", err=True)
+    typer.echo(f"claim {entry.key!r} succeeded.")
+    typer.echo(f"Its access URL is now in {store_path}.", err=True)
 
-    # A warning, not a failure: the access URL is stored and valid, and the
-    # setup token is spent and cannot be re-claimed if this exits non-zero.
     probe_failure = _probe_access_url(validated_access_url)
     if probe_failure is not None:
         could_not_confirm = f"warning: could not confirm the access URL works ({probe_failure})"
         typer.echo(f"{could_not_confirm}; it is stored anyway.", err=True)
 
     if entry.key not in {provider.key for provider in loaded_config.providers}:
-        # serve reads the store by the key its config names, so a
-        # claim the config does not reference would otherwise look like a
-        # success and then fail at startup with "claim one first".
         unreferenced = (
             f"warning: no [[providers]] entry in {config_path()} names "
             f"key {entry.key!r}, so serve will not use this access URL."
@@ -300,23 +270,19 @@ def claim(
         typer.echo(unreferenced, err=True)
 
 
-app_commands = typer.Typer(
-    add_completion=False,
-    no_args_is_help=True,
-    help="Manage the client apps this aggregator issues credentials to.",
-)
-app.add_typer(app_commands, name="app")
+client_commands = typer.Typer(add_completion=False, no_args_is_help=True, help="Manage clients.")
+app.add_typer(client_commands, name="client")
 
 
 def _check_key(key: str) -> None:
-    """Reject a key the app token store cannot be keyed by."""
+    """Reject a key the aggregator creds store cannot be keyed by."""
     if not KEY_PATTERN.fullmatch(key):
         _fail(f"error: key {key!r} must match {KEY_PATTERN.pattern}")
 
 
 def _writable_store_or_exit() -> Path:
     """Where the store lives, having reported anything about the directory first."""
-    store_path = app_tokens_path()
+    store_path = agg_creds_path()
     try:
         check_can_save(store_path)
     except StateFileError as exc:
@@ -329,19 +295,23 @@ def _print_setup_token(base_url: str, claim_secret: str, key: str, store_path: P
     typer.echo(f"note: {key!r} is now in {store_path}.", err=True)
     typer.echo(build_setup_token(base_url, claim_secret))
     shown_once = (
-        f"note: this setup token is shown once and is not stored. If it is lost before "
-        f"{key!r} claims it, run `app regen {key}` for a new one."
+        f"Note: this setup token is shown once and is not stored. If it is lost before "
+        f"{key!r} uses it, run `client reset {key}` for a new one."
     )
     typer.echo(shown_once, err=True)
 
 
-@app_commands.command("new")
-def app_new(
-    key: Annotated[
-        str, typer.Argument(help=escape(f"The app's key, matching {KEY_PATTERN.pattern}."))
-    ],
-) -> None:
-    """Issue a setup token for a client app that does not have one yet."""
+_ClientArgument = Annotated[
+    str,
+    typer.Argument(
+        metavar="client", help=escape(f"The client's key, matching {KEY_PATTERN.pattern}.")
+    ),
+]
+
+
+@client_commands.command("add")
+def client_add(key: _ClientArgument) -> None:
+    """Add a new client and print its one-time-use setup token."""
     loaded_config = _load_config_or_exit()
     _check_key(key)
     store_path = _writable_store_or_exit()
@@ -350,13 +320,13 @@ def app_new(
         # The check and the add are one locked update: read the store first and
         # the duplicate check is answered from a version another writer is
         # already replacing.
-        with update_app_tokens(store_path) as apps:
-            if key in apps:
+        with update_agg_creds(store_path) as creds:
+            if key in creds:
                 _fail(
-                    f"error: an app with key {key!r} already exists.",
-                    f"To replace its credentials with a fresh setup token: app regen {key}",
+                    f"error: client {key!r} already exists.",
+                    f"To revoke its credentials and issue a new setup token: client reset {key}",
                 )
-            claim_secret, apps[key] = new_app_token()
+            claim_secret, creds[key] = new_agg_creds()
     except StateFileError as exc:
         _fail(f"error: {exc}")
 
@@ -365,31 +335,22 @@ def app_new(
     _print_setup_token(loaded_config.base_url, claim_secret, key, store_path)
 
 
-def _format_time(when: datetime) -> str:
-    return when.isoformat(timespec="seconds")
-
-
-@app_commands.command("list")
-def app_list() -> None:
-    """Show the client apps."""
+@client_commands.command("list")
+def client_list() -> None:
+    """List clients."""
     try:
-        apps = load_app_tokens(app_tokens_path())
+        creds = load_agg_creds(agg_creds_path())
     except StateFileError as exc:
         _fail(f"error: {exc}")
 
-    if not apps:
-        typer.echo("No apps yet. Create one with `app new <key>`.", err=True)
+    if not creds:
+        typer.echo("No clients yet. Add one with `client add <client>`.", err=True)
         return
 
-    header = ("KEY", "STATUS", "CREATED", "CLAIMED")
+    header = ("KEY", "CREATED")
     rows = [
-        (
-            key,
-            record.status,
-            _format_time(record.created_at),
-            _format_time(record.claimed_at) if isinstance(record, ClaimedAppToken) else "",
-        )
-        for key, record in sorted(apps.items())
+        (key, datetime.fromtimestamp(record.created_at, UTC).isoformat())
+        for key, record in sorted(creds.items())
     ]
     widths = [max(len(row[column]) for row in (header, *rows)) for column in range(len(header))]
     for row in (header, *rows):
@@ -397,70 +358,64 @@ def app_list() -> None:
         typer.echo("  ".join(cells).rstrip())
 
 
-@app_commands.command("revoke")
-def app_revoke(key: Annotated[str, typer.Argument(help="The app's key.")]) -> None:
-    """Forget a client app, so its credentials stop working and its token cannot be claimed."""
+@client_commands.command("revoke")
+def client_revoke(key: _ClientArgument) -> None:
+    """Remove a client and revoke its credentials."""
     _check_key(key)
     store_path = _writable_store_or_exit()
 
     try:
-        with update_app_tokens(store_path) as apps:
-            if key not in apps:
-                _fail(f"error: no app has key {key!r}. `app list` shows the ones that do.")
-            del apps[key]
+        with update_agg_creds(store_path) as creds:
+            if key not in creds:
+                _fail(f"error: no client has key {key!r}. `client list` shows the ones that do.")
+            del creds[key]
     except StateFileError as exc:
         _fail(f"error: {exc}")
 
     typer.echo(f"Revoked {key!r}.")
 
 
-@app_commands.command("regen")
-def app_regen(key: Annotated[str, typer.Argument(help="The app's key.")]) -> None:
-    """Issue a client app a fresh setup token, revoking whatever it holds now."""
+@client_commands.command("reset")
+def client_reset(key: _ClientArgument) -> None:
+    """Revoke a client's existing credentials and print a new one-time-use setup token."""
     loaded_config = _load_config_or_exit()
     _check_key(key)
     store_path = _writable_store_or_exit()
 
     try:
-        with update_app_tokens(store_path) as apps:
-            if key not in apps:
-                _fail(f"error: no app has key {key!r}. `app list` shows the ones that do.")
-            claim_secret, apps[key] = new_app_token()
+        with update_agg_creds(store_path) as creds:
+            if key not in creds:
+                _fail(f"error: no client has key {key!r}. `client list` shows the ones that do.")
+            claim_secret, creds[key] = new_agg_creds(created_at=creds[key].created_at)
     except StateFileError as exc:
         _fail(f"error: {exc}")
 
     _print_setup_token(loaded_config.base_url, claim_secret, key, store_path)
 
 
-def _check_app_store_or_exit() -> None:
-    """Fail before uvicorn starts if the store cannot be read or written.
-
-    The server reads this file on every authenticated request and writes it on
-    every claim, so a file it cannot parse or a directory it cannot write to
-    is a server that answers 403 to everything and loses every claim -- found
-    here rather than by the first client app that tries.
-    """
-    store_path = app_tokens_path()
+def _check_agg_creds_or_exit() -> None:
+    """Fail before uvicorn starts, not per request, if the store cannot be read or written."""
+    store_path = agg_creds_path()
     try:
-        apps = load_app_tokens(store_path)
+        creds = load_agg_creds(store_path)
         check_can_save(store_path)
     except StateFileError as exc:
         _fail(f"error: {exc}")
 
-    if not apps:
+    if not creds:
         # A warning and not a failure: this is the legitimate state between
-        # installing the server and issuing the first app its token.
-        no_apps = (
-            "warning: no client apps yet, so every request will be refused. "
-            "Issue one with `app new <key>`."
+        # installing the server and adding its first client.
+        no_clients = (
+            "warning: no clients yet, so every request will be refused. "
+            "Add one with `client add <client>`."
         )
-        typer.echo(no_apps, err=True)
+        typer.echo(no_clients, err=True)
 
 
 def _build_app_or_exit(loaded_config: Config) -> FastAPI:
     try:
         access_urls = load_access_urls(provider_creds_path())
-        return create_app(loaded_config, access_urls, app_tokens_path())
+        return create_app(loaded_config, access_urls, agg_creds_path())
     except (StateFileError, UrlValidationError) as exc:
         _fail(f"error: {exc}")
     except ProviderAccessUrlError as exc:
@@ -473,7 +428,7 @@ def serve() -> None:
     # Named because the environment chooses it, invisibly.
     typer.echo(f"note: using config directory {config_dir()}.", err=True)
     loaded_config = _load_config_or_exit()
-    _check_app_store_or_exit()
+    _check_agg_creds_or_exit()
     fastapi_app = _build_app_or_exit(loaded_config)
 
     install_access_log_redaction(

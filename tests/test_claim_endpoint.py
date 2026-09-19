@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
-"""Tests for `POST /simplefin/claim/{token}`, which spends a setup token once."""
+"""Tests for `POST /simplefin/claim/{claim_secret}`, which exchanges a setup token once."""
 
 from __future__ import annotations
 
@@ -13,15 +13,15 @@ from urllib.parse import unquote, urlsplit
 import httpx2
 from fastapi.testclient import TestClient
 
-from simplefin_aggregator.app_tokens import UnclaimedAppToken, app_tokens_path, load_app_tokens
+from sf_agg.agg_creds import UnexchangedAggCreds, agg_creds_path, load_agg_creds
 
-from .support import PROVIDER_KEY, install_provider_transport, make_app, make_unclaimed_app
+from .support import PROVIDER_KEY, add_client, install_provider_transport, make_app
 
 
 if TYPE_CHECKING:
     import pytest
 
-UNKNOWN_TOKEN = "a-token-that-was-never-issued"  # noqa: S105
+UNKNOWN_CLAIM_SECRET = "a-claim-secret-that-was-never-issued"  # noqa: S105
 
 
 def _credentials_from(access_url: str) -> tuple[str, str]:
@@ -32,7 +32,7 @@ def _credentials_from(access_url: str) -> tuple[str, str]:
 
 
 def test_a_valid_setup_token_returns_an_access_url(tmp_path: Path) -> None:
-    secret = make_unclaimed_app(tmp_path)
+    secret = add_client(tmp_path)
     client = TestClient(make_app(tmp_path))
 
     response = client.post(f"/simplefin/claim/{secret}")
@@ -45,7 +45,7 @@ def test_a_valid_setup_token_returns_an_access_url(tmp_path: Path) -> None:
 
 def test_the_access_url_it_returns_authenticates_the_accounts_endpoint(tmp_path: Path) -> None:
     """The one end-to-end property the whole exchange exists for."""
-    secret = make_unclaimed_app(tmp_path)
+    secret = add_client(tmp_path)
     app = make_app(tmp_path)
 
     with TestClient(app) as client:
@@ -59,18 +59,18 @@ def test_the_access_url_it_returns_authenticates_the_accounts_endpoint(tmp_path:
     assert response.status_code == HTTPStatus.OK
 
 
-def test_a_claim_replaces_the_record_it_spent(tmp_path: Path) -> None:
-    secret = make_unclaimed_app(tmp_path)
+def test_an_exchange_replaces_the_record_it_matched(tmp_path: Path) -> None:
+    secret = add_client(tmp_path)
     client = TestClient(make_app(tmp_path))
 
     _ = client.post(f"/simplefin/claim/{secret}")
 
-    record = load_app_tokens(app_tokens_path(tmp_path))["test-app"]
-    assert not isinstance(record, UnclaimedAppToken)
+    record = load_agg_creds(agg_creds_path(tmp_path))["test-client"]
+    assert not isinstance(record, UnexchangedAggCreds)
 
 
-def test_a_second_claim_of_the_same_token_is_refused(tmp_path: Path) -> None:
-    secret = make_unclaimed_app(tmp_path)
+def test_a_second_exchange_of_the_same_setup_token_is_refused(tmp_path: Path) -> None:
+    secret = add_client(tmp_path)
     client = TestClient(make_app(tmp_path))
 
     first = client.post(f"/simplefin/claim/{secret}")
@@ -80,29 +80,31 @@ def test_a_second_claim_of_the_same_token_is_refused(tmp_path: Path) -> None:
     assert second.status_code == HTTPStatus.FORBIDDEN
 
 
-def test_a_spent_token_and_a_token_that_never_existed_are_answered_alike(tmp_path: Path) -> None:
+def test_an_exchanged_token_and_a_token_that_never_existed_are_answered_alike(
+    tmp_path: Path,
+) -> None:
     """The protocol conflates them deliberately, and so does the store.
 
-    A claim replaces the record it spent, so a replayed token fails the lookup
-    an unknown token fails, by the same code path -- there is no branch that
-    could tell them apart and no answer that could differ.
+    An exchange replaces the record it matched, so a replayed setup token fails
+    the lookup an unknown one fails, by the same code path -- there is no
+    branch that could tell them apart and no answer that could differ.
     """
-    secret = make_unclaimed_app(tmp_path)
+    secret = add_client(tmp_path)
     client = TestClient(make_app(tmp_path))
     _ = client.post(f"/simplefin/claim/{secret}")
 
-    spent = client.post(f"/simplefin/claim/{secret}")
-    never_issued = client.post(f"/simplefin/claim/{UNKNOWN_TOKEN}")
+    exchanged = client.post(f"/simplefin/claim/{secret}")
+    never_issued = client.post(f"/simplefin/claim/{UNKNOWN_CLAIM_SECRET}")
 
-    assert spent.status_code == never_issued.status_code == HTTPStatus.FORBIDDEN
-    assert spent.text == never_issued.text
+    assert exchanged.status_code == never_issued.status_code == HTTPStatus.FORBIDDEN
+    assert exchanged.text == never_issued.text
 
 
 def test_an_unknown_token_is_refused(tmp_path: Path) -> None:
-    _ = make_unclaimed_app(tmp_path)
+    _ = add_client(tmp_path)
     client = TestClient(make_app(tmp_path))
 
-    response = client.post(f"/simplefin/claim/{UNKNOWN_TOKEN}")
+    response = client.post(f"/simplefin/claim/{UNKNOWN_CLAIM_SECRET}")
 
     assert response.status_code == HTTPStatus.FORBIDDEN
 
@@ -110,7 +112,7 @@ def test_an_unknown_token_is_refused(tmp_path: Path) -> None:
 def test_an_empty_store_answers_every_token_alike(tmp_path: Path) -> None:
     client = TestClient(make_app(tmp_path))
 
-    response = client.post(f"/simplefin/claim/{UNKNOWN_TOKEN}")
+    response = client.post(f"/simplefin/claim/{UNKNOWN_CLAIM_SECRET}")
 
     assert response.status_code == HTTPStatus.FORBIDDEN
 
@@ -121,7 +123,7 @@ def test_a_claim_that_cannot_be_recorded_issues_nothing(
     """Persist, then respond. A client app holding credentials this server has
     no record of looks like a working setup that silently never syncs.
     """
-    secret = make_unclaimed_app(tmp_path)
+    secret = add_client(tmp_path)
     client = TestClient(make_app(tmp_path))
 
     def no_space(_self: Path, _target: str | Path) -> Path:
@@ -134,11 +136,11 @@ def test_a_claim_that_cannot_be_recorded_issues_nothing(
     assert response.status_code != HTTPStatus.OK
     assert "://" not in response.text
     monkeypatch.undo()
-    assert isinstance(load_app_tokens(app_tokens_path(tmp_path))["test-app"], UnclaimedAppToken)
+    assert isinstance(load_agg_creds(agg_creds_path(tmp_path))["test-client"], UnexchangedAggCreds)
 
 
 def test_a_claim_needs_no_body_and_no_content_type(tmp_path: Path) -> None:
-    secret = make_unclaimed_app(tmp_path)
+    secret = add_client(tmp_path)
     client = TestClient(make_app(tmp_path))
 
     request = client.build_request("POST", f"/simplefin/claim/{secret}")

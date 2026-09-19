@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 
-from simplefin_aggregator.provider_response import ProviderFailure, ProviderSuccess
+from sf_agg.provider_response import ProviderFailure, ProviderSuccess
 
 
 def test_provider_success_carries_the_body_as_the_provider_sent_it() -> None:

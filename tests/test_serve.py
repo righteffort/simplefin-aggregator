@@ -10,12 +10,12 @@ import pytest
 from pydantic import SecretStr
 from typer.testing import CliRunner
 
-from simplefin_aggregator import cli
-from simplefin_aggregator.app import CLAIM_PATH_PREFIX
-from simplefin_aggregator.app_tokens import app_tokens_path
-from simplefin_aggregator.provider_access_urls import provider_creds_path, save_access_url
+from sf_agg import cli
+from sf_agg.agg_creds import agg_creds_path
+from sf_agg.app import CLAIM_PATH_PREFIX
+from sf_agg.provider_access_urls import provider_creds_path, save_access_url
 
-from .support import make_claimed_app
+from .support import add_client_and_exchange
 
 
 if TYPE_CHECKING:
@@ -69,9 +69,9 @@ def _claim(tmp_path: Path, access_url: str = ACCESS_URL) -> None:
 
 
 def _run_serve(tmp_path: Path) -> Result:
-    # SIMPLEFIN_AGGREGATOR_DIR is never omitted in tests: without it serve
-    # would read the developer's own config and credentials.
-    return runner.invoke(cli.app, ["serve"], env={"SIMPLEFIN_AGGREGATOR_DIR": str(tmp_path)})
+    # SF_AGG_DIR is never omitted in tests: without it serve would read the
+    # developer's own config and credentials.
+    return runner.invoke(cli.app, ["serve"], env={"SF_AGG_DIR": str(tmp_path)})
 
 
 def _record_start(monkeypatch: pytest.MonkeyPatch, started: list[object]) -> None:
@@ -123,7 +123,7 @@ def test_serve_names_the_config_directory_at_startup(
     assert str(tmp_path) in result.stderr
 
 
-def test_serve_wires_up_real_claim_token_redaction(
+def test_serve_wires_up_real_setup_token_redaction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Serve's install_access_log_redaction() call uses app.py's real CLAIM_PATH_PREFIX."""
@@ -146,12 +146,12 @@ def test_serve_wires_up_real_claim_token_redaction(
         pathname=__file__,
         lineno=0,
         msg='%s - "%s %s HTTP/%s" %d',
-        args=("127.0.0.1:1", "POST", f"{CLAIM_PATH_PREFIX}claim-token", "1.1", 200),
+        args=("127.0.0.1:1", "POST", f"{CLAIM_PATH_PREFIX}claim-secret", "1.1", 200),
         exc_info=None,
     )
     _ = logger.filter(record)
 
-    assert "claim-token" not in record.getMessage()
+    assert "claim-secret" not in record.getMessage()
 
 
 def test_serve_fails_without_starting_uvicorn_on_invalid_config(
@@ -267,13 +267,14 @@ def test_serve_fails_on_a_malformed_access_url_store(
     assert "malformed JSON" in result.stderr
 
 
-def test_serve_starts_with_no_apps_yet_and_says_so(
+def test_serve_starts_with_no_clients_yet_and_says_so(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The legitimate state between installing the server and issuing the first token.
+    """The legitimate state between installing the server and adding the first client.
 
     A failure here would make the order of two setup steps load-bearing for no
-    reason; the server runs and refuses every request until an app claims.
+    reason; the server runs and refuses every request until a client exchanges
+    a setup token.
     """
     _ = _write_config(tmp_path, VALID_TOML)
     _claim(tmp_path)
@@ -284,16 +285,16 @@ def test_serve_starts_with_no_apps_yet_and_says_so(
 
     assert result.exit_code == 0
     assert len(started) == 1
-    assert "no client apps yet" in result.stderr
+    assert "no clients yet" in result.stderr
 
 
-def test_serve_refuses_to_start_on_a_malformed_app_store(
+def test_serve_refuses_to_start_on_a_malformed_aggregator_creds_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Found before uvicorn binds, not by the first client app that tries to authenticate."""
+    """Found before uvicorn binds, not by the first client that tries to authenticate."""
     _ = _write_config(tmp_path, VALID_TOML)
     _claim(tmp_path)
-    _ = app_tokens_path(tmp_path).write_text("{not json")
+    _ = agg_creds_path(tmp_path).write_text("{not json")
     started: list[object] = []
     _record_start(monkeypatch, started)
 
@@ -314,7 +315,7 @@ def test_serve_refuses_to_start_when_it_could_not_record_a_claim(
     """The server writes the store on every claim, so a read-only directory loses them."""
     _ = _write_config(tmp_path, VALID_TOML)
     _claim(tmp_path)
-    _ = make_claimed_app(tmp_path)
+    _ = add_client_and_exchange(tmp_path)
     started: list[object] = []
     _record_start(monkeypatch, started)
     tmp_path.chmod(0o500)

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from simplefin_aggregator.config import (
+from sf_agg.config import (
     DIR_ENV_VAR,
     Config,
     ConfigCheckError,
@@ -20,7 +20,7 @@ from simplefin_aggregator.config import (
     default_config_dir,
     load_config,
 )
-from simplefin_aggregator.provider_registry import KNOWN_PROVIDERS
+from sf_agg.provider_registry import KNOWN_PROVIDERS
 
 
 if TYPE_CHECKING:
@@ -390,11 +390,10 @@ def test_load_config_does_not_warn_on_owner_only_file_mode(
 
 
 def test_the_config_holds_no_credential_to_redact(tmp_path: Path) -> None:
-    """Pins a requirement: nothing in this file is a secret any more.
+    """Pins a requirement: nothing in this file is a secret.
 
-    The client app's credentials and the claim token used to live here. They
-    are digests in the app token store now, so the whole config is safe to
-    render.
+    A client's credentials are digests in the aggregator creds store, so the
+    whole config is safe to render.
     """
     config = load_config(_write(tmp_path, VALID_TOML))
 
@@ -530,7 +529,7 @@ def test_load_config_accepts_a_loopback_http_custom_provider_root(tmp_path: Path
 def test_config_dir_env_var_selects_the_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`SIMPLEFIN_AGGREGATOR_DIR` names the directory `config_dir()` resolves to."""
+    """`SF_AGG_DIR` names the directory `config_dir()` resolves to."""
     monkeypatch.setenv(DIR_ENV_VAR, str(tmp_path))
 
     assert config_dir() == tmp_path
@@ -539,9 +538,9 @@ def test_config_dir_env_var_selects_the_directory(
 def test_config_dir_defaults_when_the_env_var_is_unset(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """With no `SIMPLEFIN_AGGREGATOR_DIR`, `config_dir()` falls back to the platform default."""
+    """With no `SF_AGG_DIR`, `config_dir()` falls back to the platform default."""
     monkeypatch.delenv(DIR_ENV_VAR, raising=False)
-    monkeypatch.setattr("simplefin_aggregator.config.default_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("sf_agg.config.default_config_dir", lambda: tmp_path)
 
     assert config_dir() == tmp_path
 
@@ -560,4 +559,4 @@ def test_config_path_defaults_to_config_dir(
 
 
 def test_default_config_dir_names_the_application() -> None:
-    assert "simplefin-aggregator" in str(default_config_dir())
+    assert "sf-agg" in str(default_config_dir())

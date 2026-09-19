@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from simplefin_aggregator.provider_resolution import resolve_providers_for_account
+from sf_agg.provider_resolution import resolve_providers_for_account
 
 from .support import ProviderSpec, make_config
 
 
 if TYPE_CHECKING:
-    from simplefin_aggregator.config import Config
+    from sf_agg.config import Config
 
 
 A = ProviderSpec(key="bank-a", root="https://bank-a.example.com/simplefin")

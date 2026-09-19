@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
 import pytest
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
-from simplefin_aggregator.state_file import StateFileError, load_state_file
+from sf_agg.state_file import StateFileError, load_state_file
 
 
 if TYPE_CHECKING:

@@ -9,14 +9,14 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from simplefin_aggregator.merge import merge
-from simplefin_aggregator.provider_response import ProviderFailure, ProviderSuccess
+from sf_agg.merge import merge
+from sf_agg.provider_response import ProviderFailure, ProviderSuccess
 
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from simplefin_aggregator.provider_response import ProviderResponse
+    from sf_agg.provider_response import ProviderResponse
 
     Account = dict[str, object]
     Result = tuple[str, ProviderResponse]

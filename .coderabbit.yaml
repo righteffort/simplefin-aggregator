@@ -6,7 +6,7 @@ reviews:
   profile: assertive
 
   path_instructions:
-    - path: "src/simplefin_aggregator/**"
+    - path: "src/sf_agg/**"
       instructions: |
         This is a single-user CLI plus a loopback-only HTTP server that
         aggregates SimpleFIN providers.
@@ -74,7 +74,7 @@ reviews:
         under test removed or inverted, mocking that stubs out the very
         behavior being asserted, and tests that assert on an error message
         string without asserting the security-relevant effect.
-        Tests must never make real outbound network calls.
+        Tests must never address a host off this machine; loopback only.
 
     - path: "docs/**"
       instructions: |
